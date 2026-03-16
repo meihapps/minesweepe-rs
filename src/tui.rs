@@ -49,6 +49,9 @@ pub fn draw(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
         match &app.screen {
             Screen::MainMenu { selected } => draw_main_menu(frame, area, *selected),
             Screen::NewGameMenu { selected } => draw_new_game_menu(frame, area, *selected, app.ui_hover),
+            Screen::CustomGame { field, width, height, mines } => {
+                draw_custom_game_menu(frame, area, *field, width, height, mines, app.ui_hover);
+            }
             Screen::Playing => {
                 if let Some(game) = &app.game {
                     draw_game(frame, area, game, app.active_cell, app.cell_active);
@@ -184,6 +187,71 @@ fn draw_new_game_menu(
         .alignment(Alignment::Left);
 
     let popup = centered_rect(50, 60, area);
+    frame.render_widget(para, popup);
+}
+
+// ---------------------------------------------------------------------------
+// Custom game menu
+// ---------------------------------------------------------------------------
+
+fn draw_custom_game_menu(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    field: usize,
+    width: &str,
+    height: &str,
+    mines: &str,
+    ui_hover: Option<UiHover>,
+) {
+    let fields = [("Width", width), ("Height", height), ("Mines", mines)];
+
+    let mut lines: Vec<Line> = vec![Line::from(""), Line::from(Span::styled(
+        "Custom Game",
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+    )), Line::from("")];
+
+    for (i, (label, value)) in fields.iter().enumerate() {
+        let (label_style, value_style, prefix) = if i == field {
+            (
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                " ▶ ",
+            )
+        } else {
+            (
+                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::White),
+                "   ",
+            )
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}{:<8}", prefix, label), label_style),
+            Span::styled(format!(" {}_", value), value_style),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    let start_style = if field == 3 || ui_hover == Some(UiHover::Start) {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+    };
+    let back_style = if field == 4 || ui_hover == Some(UiHover::Back) {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  Tab: next field    ", Style::default().fg(Color::DarkGray)),
+        Span::styled("[ Start ]", start_style),
+        Span::styled("    ", Style::default()),
+        Span::styled("[ Back ]", back_style),
+    ]));
+
+    let para = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" Custom Game "))
+        .alignment(Alignment::Left);
+    let popup = centered_rect(40, 60, area);
     frame.render_widget(para, popup);
 }
 
@@ -629,6 +697,14 @@ pub fn new_game_menu_item_rows(area: Rect) -> (u16, Rect) {
     (first_item_row, popup)
 }
 
+/// Returns the popup Rect and the row of the first custom game field.
+/// Layout: border(1) + ""(1) + "Custom Game"(1) + ""(1) = 4 lines before fields.
+pub fn custom_game_field_rows(area: Rect) -> (u16, Rect) {
+    let popup = centered_rect_pub(40, 60, area);
+    let first_field_row = popup.y + 1 + 3; // border + blank + title + blank
+    (first_field_row, popup)
+}
+
 /// Returns the full-width Rect for the leaderboard tab bar and the exact column
 /// ranges for each tab label, computed to match draw_leaderboard's centered layout.
 pub fn leaderboard_tab_rects(term_size: (u16, u16)) -> (Rect, [Rect; 3]) {
@@ -792,6 +868,45 @@ pub fn translate_event(
             }
             if let Screen::NewGameMenu { .. } = screen {
                 return translate_new_game_menu_click(mouse, term_size);
+            }
+            if let Screen::CustomGame { .. } = screen {
+                let area = Rect::new(0, 0, term_size.0, term_size.1);
+                let (first_row, popup) = custom_game_field_rows(area);
+                let last_row = first_row + 2;
+                // [ Back ] is on hint row (popup.y + 8), starting at popup.x + 38
+                let back_row  = popup.y + 8;
+                let start_x   = popup.x + 22;
+                let start_w   = 9u16;
+                let back_x    = popup.x + 35;
+                let back_w    = 8u16;
+                if mouse.column < popup.x || mouse.column >= popup.x + popup.width {
+                    return None;
+                }
+                return match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if mouse.row == back_row && mouse.column >= start_x && mouse.column < start_x + start_w {
+                            Some(GameEvent { action: GameAction::Reveal, board_pos: None })
+                        } else if mouse.row == back_row && mouse.column >= back_x && mouse.column < back_x + back_w {
+                            Some(GameEvent { action: GameAction::OpenMenu, board_pos: None })
+                        } else if mouse.row >= first_row && mouse.row <= last_row {
+                            Some(GameEvent { action: GameAction::SelectGameOverItem((mouse.row - first_row) as usize), board_pos: None })
+                        } else {
+                            None
+                        }
+                    }
+                    MouseEventKind::Moved => {
+                        if mouse.row == back_row && mouse.column >= start_x && mouse.column < start_x + start_w {
+                            Some(GameEvent { action: GameAction::HoverStart, board_pos: None })
+                        } else if mouse.row == back_row && mouse.column >= back_x && mouse.column < back_x + back_w {
+                            Some(GameEvent { action: GameAction::HoverBack, board_pos: None })
+                        } else if mouse.row >= first_row && mouse.row <= last_row {
+                            Some(GameEvent { action: GameAction::HoverGameOverItem((mouse.row - first_row) as usize), board_pos: None })
+                        } else {
+                            Some(GameEvent { action: GameAction::ClearUiHover, board_pos: None })
+                        }
+                    }
+                    _ => None,
+                };
             }
             if let Screen::Leaderboard { .. } = screen {
                 return translate_leaderboard_click(mouse, term_size);
@@ -981,11 +1096,26 @@ fn translate_game_over_click(
 
 fn translate_key(
     key: &crossterm::event::KeyEvent,
-    _screen: &Screen,
+    screen: &Screen,
 ) -> Option<GameAction> {
     use crossterm::event::KeyEventKind;
-    // Only process Press events to avoid double-firing on repeat/release.
     if key.kind != KeyEventKind::Press { return None; }
+
+    // Custom game screen: raw text input, suppress vi-keys and game actions.
+    if matches!(screen, Screen::CustomGame { .. }) {
+        return match key.code {
+            KeyCode::Esc                   => Some(GameAction::OpenMenu),
+            KeyCode::Enter                 => Some(GameAction::Reveal),
+            KeyCode::Tab | KeyCode::Down   => Some(GameAction::MoveCursor(0, 1)),
+            KeyCode::Up                    => Some(GameAction::MoveCursor(0, -1)),
+            KeyCode::Backspace             => Some(GameAction::Backspace),
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL)
+                && c == 'c'                => Some(GameAction::Quit),
+            KeyCode::Char(c)               => Some(GameAction::TypeChar(c)),
+            _ => None,
+        };
+    }
+
     match key.code {
         KeyCode::Char('q') | KeyCode::Char('Q') => Some(GameAction::Quit),
         KeyCode::Esc                             => Some(GameAction::OpenMenu),
@@ -995,6 +1125,8 @@ fn translate_key(
         KeyCode::Down  | KeyCode::Char('j')      => Some(GameAction::MoveCursor(0, 1)),
         KeyCode::Left  | KeyCode::Char('h')      => Some(GameAction::MoveCursor(-1, 0)),
         KeyCode::Right | KeyCode::Char('l')      => Some(GameAction::MoveCursor(1, 0)),
+        KeyCode::Tab                             => Some(GameAction::MoveCursor(0, 1)),
+        KeyCode::Backspace                       => Some(GameAction::Backspace),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Some(GameAction::Quit)
         }

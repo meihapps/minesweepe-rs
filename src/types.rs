@@ -271,12 +271,18 @@ pub enum GameAction {
     MoveCursor(i16, i16),
     OpenMenu,
     Quit,
+    /// Type a character (used for custom game config input).
+    TypeChar(char),
+    /// Backspace (used for custom game config input).
+    Backspace,
     /// Directly select a game-over menu item by index (from mouse click).
     SelectGameOverItem(usize),
     /// Hover over a game-over menu item (from mouse move), updating selected.
     HoverGameOverItem(usize),
     /// Hover over the back button on any screen.
     HoverBack,
+    /// Hover over the start button on the custom game screen.
+    HoverStart,
     /// Clear any UI hover state (mouse moved off a hotspot).
     ClearUiHover,
 }
@@ -325,6 +331,9 @@ impl Leaderboard {
 pub enum Screen {
     MainMenu { selected: usize },
     NewGameMenu { selected: usize },
+    /// Custom game config entry. Three fields: width, height, mines.
+    /// `field` is which is selected (0/1/2), `input` is the current typed value.
+    CustomGame { field: usize, width: String, height: String, mines: String },
     Playing,
     GameOver { won: bool, selected: usize },
     /// Which difficulty tab is currently shown.
@@ -368,6 +377,7 @@ impl LeaderboardTab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiHover {
     Back,
+    Start,
     Tab(usize),
     MenuItem(usize),
 }

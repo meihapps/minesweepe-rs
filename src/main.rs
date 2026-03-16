@@ -91,7 +91,8 @@ fn handle_event(app: &mut App, event: &Event) {
 
     // UI hover actions — update ui_hover and return, never dispatch further.
     match ev.action {
-        GameAction::HoverBack => { app.ui_hover = Some(UiHover::Back); return; }
+        GameAction::HoverBack  => { app.ui_hover = Some(UiHover::Back);  return; }
+        GameAction::HoverStart => { app.ui_hover = Some(UiHover::Start); return; }
         GameAction::ClearUiHover => { app.ui_hover = None; return; }
         GameAction::HoverGameOverItem(i) => {
             // On leaderboard this means tab hover; on other screens it's menu item hover.
@@ -136,6 +137,9 @@ fn dispatch(app: &mut App, action: GameAction, board_pos: Option<(u16, u16)>) {
     match app.screen.clone() {
         Screen::MainMenu { selected }    => dispatch_main_menu(app, action, selected),
         Screen::NewGameMenu { selected } => dispatch_new_game_menu(app, action, selected),
+        Screen::CustomGame { field, width, height, mines } => {
+            dispatch_custom_game(app, action, field, width, height, mines);
+        }
         Screen::Playing                  => dispatch_playing(app, action, board_pos),
         Screen::GameOver { selected, .. } => dispatch_game_over(app, action, selected),
         Screen::Leaderboard { tab }      => dispatch_leaderboard(app, action, tab),
@@ -197,14 +201,104 @@ fn dispatch_new_game_menu(app: &mut App, action: GameAction, selected: usize) {
 }
 
 fn confirm_new_game(app: &mut App, selected: usize) {
-    let difficulty = match selected {
-        0 => Difficulty::Beginner,
-        1 => Difficulty::Intermediate,
-        2 => Difficulty::Expert,
-        // Custom config UI not yet implemented; fall back to Beginner.
-        _ => Difficulty::Beginner,
+    match selected {
+        0 => start_game(app, Difficulty::Beginner),
+        1 => start_game(app, Difficulty::Intermediate),
+        2 => start_game(app, Difficulty::Expert),
+        _ => app.screen = Screen::CustomGame {
+            field: 0,
+            width: String::new(),
+            height: String::new(),
+            mines: String::new(),
+        },
+    }
+}
+
+fn dispatch_custom_game(
+    app: &mut App,
+    action: GameAction,
+    field: usize,
+    width: String,
+    height: String,
+    mines: String,
+) {
+    // Helper to get mutable ref to the active field string.
+    let set_screen = |app: &mut App, field: usize, w: String, h: String, m: String| {
+        app.screen = Screen::CustomGame { field, width: w, height: h, mines: m };
     };
-    start_game(app, difficulty);
+
+    // 5 tab stops: 0=Width, 1=Height, 2=Mines, 3=Start, 4=Back
+    const TOTAL_STOPS: usize = 5;
+
+    // Validates and starts the game; returns true if started.
+    let validate = |w: &str, h: &str, m: &str| -> Option<Difficulty> {
+        let w: u16 = w.parse().unwrap_or(0);
+        let h: u16 = h.parse().unwrap_or(0);
+        let m: u16 = m.parse().unwrap_or(0);
+        let max_mines = w.saturating_mul(h).saturating_sub(9);
+        if w >= 4 && h >= 4 && m >= 1 && m <= max_mines {
+            Some(Difficulty::Custom(w, h, m))
+        } else {
+            None
+        }
+    };
+
+    match action {
+        GameAction::OpenMenu | GameAction::Quit => {
+            app.screen = Screen::NewGameMenu { selected: 3 };
+        }
+        // Tab: cycle through all 5 stops forward
+        GameAction::MoveCursor(0, 1) => {
+            set_screen(app, (field + 1) % TOTAL_STOPS, width, height, mines);
+        }
+        // Shift-tab / up: cycle backward
+        GameAction::MoveCursor(0, -1) => {
+            set_screen(app, (field + TOTAL_STOPS - 1) % TOTAL_STOPS, width, height, mines);
+        }
+        GameAction::Reveal => {
+            match field {
+                // On Start button: attempt to start
+                3 => { if let Some(d) = validate(&width, &height, &mines) { start_game(app, d); } }
+                // On Back button: go back
+                4 => { app.screen = Screen::NewGameMenu { selected: 3 }; }
+                // On a text field: advance to next empty field, or start if all filled
+                _ => {
+                    let fields_arr = [&width, &height, &mines];
+                    // Find next empty field after current
+                    let next_empty = (1..3)
+                        .map(|i| (field + i) % 3)
+                        .find(|&i| fields_arr[i].is_empty());
+                    if let Some(next) = next_empty {
+                        set_screen(app, next, width, height, mines);
+                    } else {
+                        // All fields filled — attempt to start
+                        if let Some(d) = validate(&width, &height, &mines) { start_game(app, d); }
+                    }
+                }
+            }
+        }
+        // Backspace: only on text fields
+        GameAction::Backspace if field < 3 => {
+            let mut fields = [width, height, mines];
+            fields[field].pop();
+            let [w, h, m] = fields;
+            set_screen(app, field, w, h, m);
+        }
+        // Digit input: only on text fields
+        GameAction::TypeChar(c) if c.is_ascii_digit() && field < 3 => {
+            let mut fields = [width, height, mines];
+            if fields[field].len() < 3 {
+                fields[field].push(c);
+            }
+            let [w, h, m] = fields;
+            set_screen(app, field, w, h, m);
+        }
+        // Mouse click on a field row selects it
+        GameAction::SelectGameOverItem(idx) | GameAction::HoverGameOverItem(idx) if idx < 3 => {
+            set_screen(app, idx, width, height, mines);
+        }
+        _ => {}
+    }
 }
 
 fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u16)>) {
