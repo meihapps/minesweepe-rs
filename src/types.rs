@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use ratatui::layout::Rect;
+use tachyonfx::Effect;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -370,7 +372,6 @@ pub enum UiHover {
     MenuItem(usize),
 }
 
-#[derive(Debug)]
 pub struct App {
     pub screen: Screen,
     pub game: Option<GameState>,
@@ -388,6 +389,10 @@ pub struct App {
     pub mouse_controlling: bool,
     /// Hovered UI element on menu/leaderboard screens. None when mouse is elsewhere.
     pub ui_hover: Option<UiHover>,
+    /// Active effects with their target rects. Processed each frame in draw().
+    pub effects: Vec<(Effect, Rect)>,
+    /// Timestamp of the last rendered frame, used to compute elapsed for effects.
+    pub last_frame: Instant,
     pub should_quit: bool,
 }
 
@@ -401,6 +406,8 @@ impl App {
             cell_active: false,
             mouse_controlling: true,
             ui_hover: None,
+            effects: Vec::new(),
+            last_frame: Instant::now(),
             should_quit: false,
         }
     }

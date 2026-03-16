@@ -10,10 +10,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell as RatCell, Paragraph, Row, Table, Clear};
+use ratatui::widgets::{Block, Borders, Cell as RatCell, Paragraph, Row, Table};
 use ratatui::Terminal;
 use std::io::{self, Stdout};
-use std::time::Duration;
 
 use crate::types::{
     App, CellVisibility, GameAction, GameEvent, GameStatus, LeaderboardTab, Screen, UiHover,
@@ -44,7 +43,7 @@ pub fn restore(terminal: &mut Tui) -> io::Result<()> {
 // Main render dispatch
 // ---------------------------------------------------------------------------
 
-pub fn draw(terminal: &mut Tui, app: &App) -> io::Result<()> {
+pub fn draw(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
     terminal.draw(|frame| {
         let area = frame.area();
         match &app.screen {
@@ -57,15 +56,22 @@ pub fn draw(terminal: &mut Tui, app: &App) -> io::Result<()> {
             }
             Screen::GameOver { won, selected } => {
                 if let Some(game) = &app.game {
-                    draw_game(frame, area, game, app.active_cell, app.cell_active);
-                    draw_game_over_overlay(frame, area, *won, game.elapsed, *selected);
+                    draw_game_over(frame, area, game, app.active_cell, app.cell_active, *won, *selected);
                 }
             }
             Screen::Leaderboard { tab } => {
                 draw_leaderboard(frame, area, &app.leaderboard, *tab, app.ui_hover);
             }
         }
+        // Process each effect with its own scoped rect, then remove completed ones.
+        let elapsed = app.last_frame.elapsed();
+        let buf = frame.buffer_mut();
+        for (effect, rect) in &mut app.effects {
+            effect.process(elapsed, buf, *rect);
+        }
+        app.effects.retain(|(effect, _)| effect.running());
     })?;
+    app.last_frame = std::time::Instant::now();
     Ok(())
 }
 
@@ -201,6 +207,78 @@ fn draw_game(
     draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config);
 }
 
+/// Game over screen: board stays fully visible, result replaces the status bar,
+/// and menu items appear below the board in any remaining space.
+fn draw_game_over(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    game: &crate::types::GameState,
+    active_cell: (u16, u16),
+    cell_active: bool,
+    won: bool,
+    selected: usize,
+) {
+    let secs = game.elapsed.as_secs();
+    let time_str = format!("{:02}:{:02}", secs / 60, secs % 60);
+    let (result_text, result_color) = if won {
+        ("✓ You Win!", Color::Green)
+    } else {
+        ("✗ Game Over", Color::Red)
+    };
+
+    // Header bar: result + time (replaces status bar)
+    let header_line = Line::from(vec![
+        Span::styled(
+            format!("  {}  ", result_text),
+            Style::default().fg(result_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(time_str, Style::default().fg(Color::White)),
+        Span::raw("          "),
+        Span::styled(
+            format!("[{}]", game.difficulty.label()),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    let header = Paragraph::new(header_line)
+        .block(Block::default().borders(Borders::ALL))
+        .alignment(Alignment::Center);
+
+    let footer_h = 3u16;
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),       // header
+            Constraint::Min(0),          // board + remaining space
+            Constraint::Length(footer_h), // footer menu
+        ])
+        .split(area);
+
+    frame.render_widget(header, chunks[0]);
+    draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config);
+
+    // Footer menu: items in a single centered line
+    let items: Vec<Span> = GAME_OVER_ITEMS.iter().enumerate().flat_map(|(i, item)| {
+        let style = if i == selected {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let sep = if i > 0 {
+            vec![Span::styled("  |  ", Style::default().fg(Color::DarkGray))]
+        } else {
+            vec![]
+        };
+        sep.into_iter().chain(std::iter::once(Span::styled(format!("[ {} ]", item), style)))
+    }).collect();
+
+    let footer = Paragraph::new(Line::from(items))
+        .block(Block::default().borders(Borders::ALL))
+        .alignment(Alignment::Center);
+    frame.render_widget(footer, chunks[2]);
+}
+
 fn draw_status_bar(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -249,6 +327,19 @@ fn draw_board(
     let detonated = match status {
         GameStatus::Lost { detonated } => Some(*detonated),
         _ => None,
+    };
+
+    // If the active cell is a revealed number, highlight its 8 neighbours.
+    let neighbour_zone: Option<(u16, u16)> = if cell_active {
+        let (ax, ay) = active_cell;
+        let c = board.get(ax, ay);
+        if c.visibility == CellVisibility::Revealed && !c.is_mine && c.adjacent_mines > 0 {
+            Some((ax, ay))
+        } else {
+            None
+        }
+    } else {
+        None
     };
 
     let stride_w = CELL_WIDTH + BORDER_COL;   // 3
@@ -357,45 +448,28 @@ fn draw_board(
                 let is_lft = cx == 0;
                 let is_rgt = cx == config.width as i32;
 
-                // Determine which arms of this junction are active.
-                // N arm: vertical segment going up   → active if v_seg between (cx-1,cy_above) and (cx,cy_above)... 
-                // Actually the arms of a junction at grid point (cx, border_row) are:
-                //   W arm: horizontal segment to the left  (cx-1 .. cx on this border row)
-                //   E arm: horizontal segment to the right (cx .. cx+1 on this border row)
-                //   N arm: vertical segment going up       (between cy_above row cells, left=cx-1, right=cx)
-                //   S arm: vertical segment going down     (between cy_below row cells, left=cx-1, right=cx)
-                //
-                // W/E arms follow h_seg_active; N/S arms follow v_seg_active.
                 let arm_w = !is_lft && h_seg_active(cx - 1, cy_above, cy_below, is_top, is_bot);
                 let arm_e = !is_rgt && h_seg_active(cx,     cy_above, cy_below, is_top, is_bot);
                 let arm_n = !is_top && v_seg_active(cx - 1, cx, cy_above, is_lft, is_rgt);
                 let arm_s = !is_bot && v_seg_active(cx - 1, cx, cy_below, is_lft, is_rgt);
 
-                // Pick the box-drawing character from active arms.
-                // Perimeter points always have at least one active arm.
                 let junction = match (arm_n, arm_s, arm_w, arm_e) {
                     (false, false, false, false) => " ",
-                    // Straight lines
                     (false, false, true,  true ) => "─",
                     (true,  true,  false, false) => "│",
-                    // Corners
                     (false, true,  false, true ) => "┌",
                     (false, true,  true,  false) => "┐",
                     (true,  false, false, true ) => "└",
                     (true,  false, true,  false) => "┘",
-                    // T-junctions
                     (false, true,  true,  true ) => "┬",
                     (true,  false, true,  true ) => "┴",
                     (true,  true,  false, true ) => "├",
                     (true,  true,  true,  false) => "┤",
-                    // Cross
                     (true,  true,  true,  true ) => "┼",
-                    // Single arms (dead ends — use the nearest flat char)
                     (true,  false, false, false) => "╵",
                     (false, true,  false, false) => "╷",
                     (false, false, true,  false) => "╴",
                     (false, false, false, true ) => "╶",
-                    // Catch-all (unreachable in practice)
                 };
 
                 if junction == " " {
@@ -404,7 +478,6 @@ fn draw_board(
                     spans.push(Span::styled(junction, border_style));
                 }
 
-                // Horizontal segment to the right of this junction.
                 if !is_rgt {
                     if h_seg_active(cx, cy_above, cy_below, is_top, is_bot) {
                         spans.push(Span::styled("──", border_style));
@@ -426,7 +499,10 @@ fn draw_board(
                 let cell = board.get(cx as u16, cy as u16);
                 let is_active    = cell_active && (cx as u16, cy as u16) == active_cell;
                 let is_detonated = detonated == Some((cx as u16, cy as u16));
-                spans.push(cell_span(cell, is_active, is_detonated));
+                let is_neighbour = !is_active && neighbour_zone.map_or(false, |(zx, zy)| {
+                    (cx as u16).abs_diff(zx) <= 1 && (cy as u16).abs_diff(zy) <= 1
+                });
+                spans.push(cell_span(cell, is_active, is_neighbour, is_detonated));
             }
             // Right perimeter border — always drawn.
             spans.push(Span::styled("│", border_style));
@@ -448,6 +524,7 @@ fn draw_board(
 fn cell_span<'a>(
     cell: &crate::types::Cell,
     is_active: bool,
+    is_neighbour: bool,
     is_detonated: bool,
 ) -> Span<'a> {
     // Fullwidth characters: each is a 2-column glyph.
@@ -497,13 +574,14 @@ fn cell_span<'a>(
     if is_detonated {
         style = style.bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD);
     } else if is_active {
-        // Single highlight for both keyboard and mouse — consistent regardless of input method.
-        let active_bg = if matches!(cell.visibility, CellVisibility::Revealed) {
+        style = style.bg(Color::White).fg(Color::Black);
+    } else if is_neighbour && !matches!(cell.visibility, CellVisibility::Revealed) {
+        let neighbour_bg = if matches!(cell.visibility, CellVisibility::Revealed) {
             Color::Rgb(40, 50, 80)
         } else {
             Color::Rgb(70, 80, 120)
         };
-        style = style.bg(active_bg).fg(Color::White);
+        style = style.bg(neighbour_bg);
     }
 
     Span::styled(sym, style)
@@ -515,65 +593,24 @@ fn cell_span<'a>(
 
 pub const GAME_OVER_ITEMS: &[&str] = &["New Game", "Main Menu", "Quit"];
 
-fn draw_game_over_overlay(
-    frame: &mut ratatui::Frame,
-    area: Rect,
-    won: bool,
-    elapsed: Duration,
-    selected: usize,
-) {
-    let secs = elapsed.as_secs();
-    let time_str = format!("{:02}:{:02}", secs / 60, secs % 60);
 
-    let (title, color) = if won {
-        (" You Win! ", Color::Green)
-    } else {
-        (" Game Over ", Color::Red)
-    };
 
-    let mut text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            if won { "Congratulations!" } else { "Better luck next time." },
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            format!("Time: {}", time_str),
-            Style::default().fg(Color::White),
-        )),
-        Line::from(""),
-    ];
-
-    for (i, item) in GAME_OVER_ITEMS.iter().enumerate() {
-        if i == selected {
-            text.push(Line::from(Span::styled(
-                format!(" ▶ {} ", item),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            )));
-        } else {
-            text.push(Line::from(Span::styled(
-                format!("   {} ", item),
-                Style::default().fg(Color::White),
-            )));
-        }
-    }
-
-    let para = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .alignment(Alignment::Center);
-
-    let popup = centered_rect(36, 55, area);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(para, popup);
-}
-
-/// Returns the screen row (relative to terminal top) of the first game-over
-/// menu item, given the popup rect. Used for mouse hit-testing.
-pub fn game_over_item_rows(area: Rect) -> (u16, Rect) {
-    let popup = centered_rect_pub(36, 55, area);
-    // Border = 1 row, then: "", message, time, "" = 4 lines before items.
-    let first_item_row = popup.y + 1 + 4;
-    (first_item_row, popup)
+/// Returns the terminal Rects for the three game-over footer items.
+/// Items are on a single row in the last 3 rows of the screen:
+/// "[ New Game ]  |  [ Main Menu ]  |  [ Quit ]" centered.
+pub fn game_over_item_rects(term_size: (u16, u16)) -> [Rect; 3] {
+    // Full string: "[ New Game ]  |  [ Main Menu ]  |  [ Quit ]" = 43 chars
+    // Item starts and widths within the string:
+    const FULL_LEN: u16 = 43;
+    const STARTS: [u16; 3] = [0, 17, 35];
+    const WIDTHS: [u16; 3] = [12, 13, 8];
+    let inner_w = term_size.0.saturating_sub(2);
+    let left_pad = (inner_w.saturating_sub(FULL_LEN)) / 2;
+    // Footer content row is term_height - 2 (inside the border)
+    let row = term_size.1.saturating_sub(2);
+    [0usize, 1, 2].map(|i| {
+        Rect::new(1 + left_pad + STARTS[i], row, WIDTHS[i], 1)
+    })
 }
 
 /// Returns the popup Rect and the row of the first main menu item.
@@ -743,10 +780,12 @@ pub fn translate_event(
             // For the game-over overlay, intercept clicks on the menu items
             // before they reach the board underneath.
             if let Screen::GameOver { .. } = screen {
+                // Check footer items first; otherwise allow board mouse events through.
                 if let Some(ev) = translate_game_over_click(mouse, term_size) {
                     return Some(ev);
                 }
-                return None;
+                // Board is fully visible — allow hover/move to update active cell.
+                return translate_mouse(mouse, board_origin, board_size);
             }
             if let Screen::MainMenu { .. } = screen {
                 return translate_main_menu_click(mouse, term_size);
@@ -900,44 +939,41 @@ fn translate_leaderboard_click(
     }
 }
 
-/// Hit-tests a mouse click against the game-over overlay menu items.
-/// Returns a MoveCursor event (to update selected index) or Reveal (to confirm).
+/// Hit-tests mouse events against the game-over footer items.
+/// Items are on a single row in the footer bar at the bottom of the screen.
 fn translate_game_over_click(
     mouse: &crossterm::event::MouseEvent,
     term_size: (u16, u16),
 ) -> Option<GameEvent> {
-    let area = Rect::new(0, 0, term_size.0, term_size.1);
-    let (first_row, popup) = game_over_item_rows(area);
-    let last_row = first_row + GAME_OVER_ITEMS.len() as u16 - 1;
-
-    // Only care about clicks inside the popup.
-    if mouse.column < popup.x || mouse.column >= popup.x + popup.width {
-        return None;
-    }
+    let rects = game_over_item_rects(term_size);
+    let footer_row = term_size.1.saturating_sub(2);
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            if mouse.row >= first_row && mouse.row <= last_row {
-                let idx = (mouse.row - first_row) as usize;
-                // Encode item index into a cursor move so dispatch can use it directly.
-                Some(GameEvent {
-                    action: GameAction::SelectGameOverItem(idx),
-                    board_pos: None,
-                })
-            } else {
-                None
+            if mouse.row == footer_row {
+                for (i, rect) in rects.iter().enumerate() {
+                    if mouse.column >= rect.x && mouse.column < rect.x + rect.width {
+                        return Some(GameEvent {
+                            action: GameAction::SelectGameOverItem(i),
+                            board_pos: None,
+                        });
+                    }
+                }
             }
+            None
         }
         MouseEventKind::Moved => {
-            if mouse.row >= first_row && mouse.row <= last_row {
-                let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent {
-                    action: GameAction::HoverGameOverItem(idx),
-                    board_pos: None,
-                })
-            } else {
-                None
+            if mouse.row == footer_row {
+                for (i, rect) in rects.iter().enumerate() {
+                    if mouse.column >= rect.x && mouse.column < rect.x + rect.width {
+                        return Some(GameEvent {
+                            action: GameAction::HoverGameOverItem(i),
+                            board_pos: None,
+                        });
+                    }
+                }
             }
+            None
         }
         _ => None,
     }
@@ -997,6 +1033,17 @@ fn translate_mouse(
 /// Given the current terminal size and board config, returns the top-left
 /// corner of the board widget in terminal space. Used for mouse → board-space
 /// translation.
+/// Computes the terminal Rect covering the entire rendered board (excluding status bar).
+/// Used to scope tachyonfx effects to the board area.
+pub fn board_rect(term_width: u16, term_height: u16, config: &crate::types::GameConfig) -> Rect {
+    let origin = board_origin(term_width, term_height, config);
+    let stride_w = CELL_WIDTH + BORDER_COL;
+    let stride_h = CELL_HEIGHT + BORDER_ROW;
+    let w = config.width  * stride_w + BORDER_COL;
+    let h = config.height * stride_h + BORDER_ROW;
+    Rect::new(origin.0, origin.1, w, h)
+}
+
 pub fn board_origin(
     term_width: u16,
     term_height: u16,

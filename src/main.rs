@@ -2,15 +2,19 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event};
 
+use ratatui::layout::Rect;
 use minesweepe_rs::game;
+use minesweepe_rs::game::{detonate_effect, reveal_effect};
 use minesweepe_rs::leaderboard;
 use minesweepe_rs::tui;
 use minesweepe_rs::tui::{GAME_OVER_ITEMS, MAIN_MENU_ITEMS, NEW_GAME_ITEMS};
 use minesweepe_rs::types::{
     App, Difficulty, GameAction, GameState, GameStatus, LeaderboardTab, Screen, UiHover,
+    BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
 };
 
 const TICK_RATE: Duration = Duration::from_millis(250);
+const EFFECT_TICK: Duration = Duration::from_millis(16); // ~60fps when effects running
 
 fn main() -> anyhow::Result<()> {
     let lb = leaderboard::load();
@@ -34,7 +38,9 @@ fn run(terminal: &mut tui::Tui, app: &mut App) -> anyhow::Result<()> {
     loop {
         tui::draw(terminal, app)?;
 
-        let timeout = TICK_RATE.saturating_sub(last_tick.elapsed());
+        // Use faster tick while effects are running for smooth animation.
+        let tick = if !app.effects.is_empty() { EFFECT_TICK } else { TICK_RATE };
+        let timeout = tick.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             let raw = event::read()?;
             handle_event(app, &raw);
@@ -223,7 +229,7 @@ fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u
 
     let Some(game) = &mut app.game else { return };
 
-    let changed = match action {
+    let newly_revealed: Vec<(u16, u16)> = match action {
         GameAction::Reveal => {
             let cell = game.board.get(target.0, target.1);
             if cell.visibility == minesweepe_rs::types::CellVisibility::Revealed {
@@ -232,12 +238,32 @@ fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u
                 game::reveal(game, target.0, target.1)
             }
         }
-        GameAction::CycleFlag => game::cycle_flag(game, target.0, target.1),
+        GameAction::CycleFlag => { game::cycle_flag(game, target.0, target.1); vec![] }
         GameAction::Chord     => game::chord(game, target.0, target.1),
-        _ => false,
+        _ => vec![],
     };
 
-    if changed {
+    let flag_changed = matches!(action, GameAction::CycleFlag);
+    let was_lost = matches!(app.game.as_ref().map(|g| &g.status), Some(GameStatus::Lost { .. }));
+
+    if !newly_revealed.is_empty() {
+        // Apply coalesce effect to each newly revealed cell individually.
+        let (tw, th) = crossterm::terminal::size().unwrap_or((80, 24));
+        if let Some(game) = &app.game {
+            let origin = tui::board_origin(tw, th, &game.config);
+            let stride_w = CELL_WIDTH + BORDER_COL;
+            let stride_h = CELL_HEIGHT + BORDER_ROW;
+            let count = newly_revealed.len();
+            for (cx, cy) in &newly_revealed {
+                let x = origin.0 + 1 + cx * stride_w;
+                let y = origin.1 + 1 + cy * stride_h;
+                let rect = Rect::new(x, y, CELL_WIDTH, CELL_HEIGHT);
+                app.effects.push((reveal_effect(count), rect));
+            }
+        }
+    }
+
+    if !newly_revealed.is_empty() || flag_changed || was_lost {
         check_game_over(app);
     }
 }
@@ -328,6 +354,9 @@ fn check_game_over(app: &mut App) {
             app.screen = Screen::GameOver { won: true, selected: 0 };
         }
         GameStatus::Lost { .. } => {
+            let (tw, th) = crossterm::terminal::size().unwrap_or((80, 24));
+            let det_rect = tui::board_rect(tw, th, &game.config);
+            app.effects.push((detonate_effect(), det_rect));
             app.screen = Screen::GameOver { won: false, selected: 0 };
         }
         _ => {}

@@ -67,16 +67,11 @@ fn compute_adjacency(board: &mut Board) {
 // ---------------------------------------------------------------------------
 
 /// Attempts to reveal the cell at (x, y).
-///
-/// - If the cell is Flagged or Revealed, does nothing.
-/// - If it's a mine, transitions to Lost.
-/// - If adjacent_mines == 0, flood-fills all connected zero-adjacent cells.
-/// - Otherwise reveals just the clicked cell.
-///
-/// Returns whether the board state changed.
-pub fn reveal(state: &mut GameState, x: u16, y: u16) -> bool {
+/// Returns the list of newly revealed cell coordinates (empty if nothing changed or mine).
+/// On mine: returns empty (detonation handled separately via game status).
+pub fn reveal(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
     match state.board.get(x, y).visibility {
-        CellVisibility::Flagged | CellVisibility::Revealed => return false,
+        CellVisibility::Flagged | CellVisibility::Revealed => return vec![],
         _ => {}
     }
 
@@ -90,35 +85,37 @@ pub fn reveal(state: &mut GameState, x: u16, y: u16) -> bool {
         state.board.get_mut(x, y).visibility = CellVisibility::Revealed;
         state.status = GameStatus::Lost { detonated: (x, y) };
         reveal_all_mines(&mut state.board);
-        return true;
+        return vec![];  // detonation effect triggered separately
     }
 
-    if cell.adjacent_mines == 0 {
-        flood_fill(&mut state.board, x, y);
+    let newly_revealed = if cell.adjacent_mines == 0 {
+        flood_fill(&mut state.board, x, y)
     } else {
         state.board.get_mut(x, y).visibility = CellVisibility::Revealed;
-    }
+        vec![(x, y)]
+    };
 
     check_win(state);
-    true
+    newly_revealed
 }
 
 /// Flood-fill reveal for cells with zero adjacent mines.
-/// Uses an iterative stack to avoid recursion depth issues on large boards.
-fn flood_fill(board: &mut Board, start_x: u16, start_y: u16) {
+/// Returns the list of newly revealed cell coordinates.
+fn flood_fill(board: &mut Board, start_x: u16, start_y: u16) -> Vec<(u16, u16)> {
     let mut stack = vec![(start_x, start_y)];
+    let mut revealed = Vec::new();
 
     while let Some((x, y)) = stack.pop() {
         let cell = board.get(x, y);
         if cell.visibility == CellVisibility::Revealed {
             continue;
         }
-        // Don't auto-reveal flagged cells — player marked them intentionally.
         if cell.visibility == CellVisibility::Flagged {
             continue;
         }
 
         board.get_mut(x, y).visibility = CellVisibility::Revealed;
+        revealed.push((x, y));
 
         if board.get(x, y).adjacent_mines == 0 {
             for (nx, ny) in board.neighbours(x, y) {
@@ -128,6 +125,7 @@ fn flood_fill(board: &mut Board, start_x: u16, start_y: u16) {
             }
         }
     }
+    revealed
 }
 
 /// On loss, reveal all mines (except correctly flagged ones).
@@ -148,10 +146,10 @@ fn reveal_all_mines(board: &mut Board) {
 ///
 /// Does nothing if the cell is not revealed, has no adjacent mines, or the
 /// flagged-neighbour count doesn't match.
-pub fn chord(state: &mut GameState, x: u16, y: u16) -> bool {
+pub fn chord(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
     let cell = state.board.get(x, y);
     if cell.visibility != CellVisibility::Revealed || cell.adjacent_mines == 0 {
-        return false;
+        return vec![];
     }
 
     let flagged = state
@@ -161,7 +159,7 @@ pub fn chord(state: &mut GameState, x: u16, y: u16) -> bool {
         .count() as u8;
 
     if flagged != cell.adjacent_mines {
-        return false;
+        return vec![];
     }
 
     // Collect neighbours to reveal before mutating.
@@ -171,15 +169,15 @@ pub fn chord(state: &mut GameState, x: u16, y: u16) -> bool {
         .filter(|&(nx, ny)| state.board.get(nx, ny).visibility.is_hidden())
         .collect();
 
-    let mut changed = false;
+    let mut all_revealed: Vec<(u16, u16)> = Vec::new();
     for (nx, ny) in to_reveal {
-        // reveal() handles mines, flood-fill, and win detection internally.
-        changed |= reveal(state, nx, ny);
+        let newly = reveal(state, nx, ny);
+        all_revealed.extend(newly);
         if matches!(state.status, GameStatus::Lost { .. }) {
-            return true;
+            return all_revealed;
         }
     }
-    changed
+    all_revealed
 }
 
 // ---------------------------------------------------------------------------
@@ -244,4 +242,34 @@ pub fn move_cursor(cursor: (u16, u16), dx: i16, dy: i16, config: &GameConfig) ->
     let new_x = (cursor.0 as i16 + dx).clamp(0, config.width as i16 - 1) as u16;
     let new_y = (cursor.1 as i16 + dy).clamp(0, config.height as i16 - 1) as u16;
     (new_x, new_y)
+}
+
+// ---------------------------------------------------------------------------
+// Effect helpers
+// ---------------------------------------------------------------------------
+
+use tachyonfx::{fx, Effect, Interpolation};
+
+/// Effect played when cells are revealed: cells coalesce (materialise from
+/// random scatter) over the cell area. Duration scales with cell count —
+/// a single cell is fast, a large flood fill gets more time to read.
+pub fn reveal_effect(cell_count: usize) -> Effect {
+    const MIN_MS: u32 = 120;
+    const MAX_MS: u32 = 550;
+    const SCALE_AT: usize = 40; // cell count at which duration reaches MAX_MS
+    let t = (cell_count as f32 / SCALE_AT as f32).min(1.0);
+    let duration = MIN_MS + ((MAX_MS - MIN_MS) as f32 * t) as u32;
+    fx::coalesce((duration, Interpolation::QuadOut))
+}
+
+/// Effect played on mine detonation: red flash that fades out over the board.
+/// fx::fade_from(fg, bg, timer) starts from the given colours and fades back
+/// to the buffer's existing colours — a pure colour overlay, no content removed.
+pub fn detonate_effect() -> Effect {
+    // Use RGB tuples — accepted by Into<Color> on both ratatui and ratatui_core.
+    // Slam to white-on-red, then fade back to whatever the board was rendering.
+    fx::sequence(&[
+        fx::fade_to((255u8, 255u8, 255u8), (180u8, 20u8, 20u8), (60, Interpolation::Linear)),
+        fx::fade_from((255u8, 255u8, 255u8), (180u8, 20u8, 20u8), (500, Interpolation::QuadOut)),
+    ])
 }
