@@ -2,6 +2,12 @@
 name = "minesweepe-rs"
 version = "0.1.0"
 edition = "2021"
+description = "rust minesweeper. minesweeper in rust."
+license = "MIT"
+repository = "https://github.com/meihapps/minesweepe-rs"
+readme = "README.md"
+keywords = ["minesweeper", "tui", "game", "terminal"]
+categories = ["games", "command-line-utilities"]
 
 [dependencies]
 ratatui = { version = "0.30", features = ["crossterm"] }
