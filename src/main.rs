@@ -9,7 +9,7 @@ use minesweepe_rs::leaderboard;
 use minesweepe_rs::tui;
 use minesweepe_rs::tui::{GAME_OVER_ITEMS, MAIN_MENU_ITEMS, NEW_GAME_ITEMS};
 use minesweepe_rs::types::{
-    App, Difficulty, GameAction, GameState, GameStatus, LeaderboardTab, Screen, UiHover,
+    App, CellVisibility, Difficulty, GameAction, GameState, GameStatus, LeaderboardTab, Screen, UiHover,
     BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
 };
 
@@ -75,8 +75,12 @@ fn tick_timer(app: &mut App) {
 // Event handling
 // ---------------------------------------------------------------------------
 
+fn term_size() -> (u16, u16) {
+    crossterm::terminal::size().unwrap_or((80, 24))
+}
+
 fn handle_event(app: &mut App, event: &Event) {
-    let (tw, th) = crossterm::terminal::size().unwrap_or((80, 24));
+    let (tw, th) = term_size();
 
     let board_origin = app.game.as_ref().map_or((0, 0), |g| {
         tui::board_origin(tw, th, &g.config)
@@ -94,7 +98,7 @@ fn handle_event(app: &mut App, event: &Event) {
         GameAction::HoverBack  => { app.ui_hover = Some(UiHover::Back);  return; }
         GameAction::HoverStart => { app.ui_hover = Some(UiHover::Start); return; }
         GameAction::ClearUiHover => { app.ui_hover = None; return; }
-        GameAction::HoverGameOverItem(i) => {
+        GameAction::MenuHover(i) => {
             // On leaderboard this means tab hover; on other screens it's menu item hover.
             // Only set ui_hover here for leaderboard; other screens handle it in dispatch.
             if matches!(app.screen, Screen::Leaderboard { .. }) {
@@ -141,12 +145,19 @@ fn dispatch(app: &mut App, action: GameAction, board_pos: Option<(u16, u16)>) {
             dispatch_custom_game(app, action, field, width, height, mines);
         }
         Screen::Playing                  => dispatch_playing(app, action, board_pos),
-        Screen::GameOver { selected, .. } => dispatch_game_over(app, action, selected),
+        Screen::GameOver { selected, won } => dispatch_game_over(app, action, selected, won),
         Screen::Leaderboard { tab }      => dispatch_leaderboard(app, action, tab),
     }
 }
 
 fn dispatch_main_menu(app: &mut App, action: GameAction, selected: usize) {
+    fn confirm(app: &mut App, idx: usize) {
+        match idx {
+            0 => app.screen = Screen::NewGameMenu { selected: 0 },
+            1 => app.screen = Screen::Leaderboard { tab: LeaderboardTab::Beginner },
+            _ => app.should_quit = true,
+        }
+    }
     let item_count = MAIN_MENU_ITEMS.len();
     match action {
         GameAction::Quit => app.should_quit = true,
@@ -156,62 +167,47 @@ fn dispatch_main_menu(app: &mut App, action: GameAction, selected: usize) {
         GameAction::MoveCursor(0, 1) => {
             app.screen = Screen::MainMenu { selected: (selected + 1).min(item_count - 1) };
         }
-        GameAction::Reveal => confirm_main_menu(app, selected),
-        // Mouse hover: update highlighted item
-        GameAction::HoverGameOverItem(idx) => {
-            app.screen = Screen::MainMenu { selected: idx };
-        }
-        // Mouse click: confirm item
-        GameAction::SelectGameOverItem(idx) => confirm_main_menu(app, idx),
+        GameAction::Reveal            => confirm(app, selected),
+        GameAction::MenuSelect(idx)   => confirm(app, idx),
+        GameAction::MenuHover(idx)    => app.screen = Screen::MainMenu { selected: idx },
         _ => {}
     }
 }
 
-fn confirm_main_menu(app: &mut App, selected: usize) {
-    match selected {
-        0 => app.screen = Screen::NewGameMenu { selected: 0 },
-        1 => app.screen = Screen::Leaderboard { tab: LeaderboardTab::Beginner },
-        _ => app.should_quit = true,
-    }
-}
-
 fn dispatch_new_game_menu(app: &mut App, action: GameAction, selected: usize) {
+    fn confirm(app: &mut App, idx: usize) {
+        match idx {
+            0 => start_game(app, Difficulty::Beginner),
+            1 => start_game(app, Difficulty::Intermediate),
+            2 => start_game(app, Difficulty::Expert),
+            _ => app.screen = Screen::CustomGame {
+                field: 0,
+                width: String::new(),
+                height: String::new(),
+                mines: String::new(),
+            },
+        }
+    }
     let item_count = NEW_GAME_ITEMS.len();
     match action {
         GameAction::OpenMenu | GameAction::Quit => {
             app.screen = Screen::MainMenu { selected: 0 };
         }
         GameAction::MoveCursor(0, -1) => {
-            app.screen = Screen::NewGameMenu {
-                selected: selected.saturating_sub(1),
-            };
+            app.screen = Screen::NewGameMenu { selected: selected.saturating_sub(1) };
         }
         GameAction::MoveCursor(0, 1) => {
-            app.screen = Screen::NewGameMenu {
-                selected: (selected + 1).min(item_count - 1),
-            };
+            app.screen = Screen::NewGameMenu { selected: (selected + 1).min(item_count - 1) };
         }
-        GameAction::Reveal => confirm_new_game(app, selected),
-        GameAction::HoverGameOverItem(idx) => {
-            app.screen = Screen::NewGameMenu { selected: idx };
-        }
-        GameAction::SelectGameOverItem(idx) => confirm_new_game(app, idx),
+        GameAction::Reveal          => confirm(app, selected),
+        GameAction::MenuSelect(idx) => confirm(app, idx),
+        GameAction::MenuHover(idx)  => app.screen = Screen::NewGameMenu { selected: idx },
         _ => {}
     }
 }
 
-fn confirm_new_game(app: &mut App, selected: usize) {
-    match selected {
-        0 => start_game(app, Difficulty::Beginner),
-        1 => start_game(app, Difficulty::Intermediate),
-        2 => start_game(app, Difficulty::Expert),
-        _ => app.screen = Screen::CustomGame {
-            field: 0,
-            width: String::new(),
-            height: String::new(),
-            mines: String::new(),
-        },
-    }
+fn set_custom_game_screen(app: &mut App, field: usize, width: String, height: String, mines: String) {
+    app.screen = Screen::CustomGame { field, width, height, mines };
 }
 
 fn dispatch_custom_game(
@@ -222,15 +218,9 @@ fn dispatch_custom_game(
     height: String,
     mines: String,
 ) {
-    // Helper to get mutable ref to the active field string.
-    let set_screen = |app: &mut App, field: usize, w: String, h: String, m: String| {
-        app.screen = Screen::CustomGame { field, width: w, height: h, mines: m };
-    };
-
     // 5 tab stops: 0=Width, 1=Height, 2=Mines, 3=Start, 4=Back
     const TOTAL_STOPS: usize = 5;
 
-    // Validates and starts the game; returns true if started.
     let validate = |w: &str, h: &str, m: &str| -> Option<Difficulty> {
         let w: u16 = w.parse().unwrap_or(0);
         let h: u16 = h.parse().unwrap_or(0);
@@ -249,11 +239,11 @@ fn dispatch_custom_game(
         }
         // Tab: cycle through all 5 stops forward
         GameAction::MoveCursor(0, 1) => {
-            set_screen(app, (field + 1) % TOTAL_STOPS, width, height, mines);
+            set_custom_game_screen(app, (field + 1) % TOTAL_STOPS, width, height, mines);
         }
         // Shift-tab / up: cycle backward
         GameAction::MoveCursor(0, -1) => {
-            set_screen(app, (field + TOTAL_STOPS - 1) % TOTAL_STOPS, width, height, mines);
+            set_custom_game_screen(app, (field + TOTAL_STOPS - 1) % TOTAL_STOPS, width, height, mines);
         }
         GameAction::Reveal => {
             match field {
@@ -264,14 +254,12 @@ fn dispatch_custom_game(
                 // On a text field: advance to next empty field, or start if all filled
                 _ => {
                     let fields_arr = [&width, &height, &mines];
-                    // Find next empty field after current
                     let next_empty = (1..3)
                         .map(|i| (field + i) % 3)
                         .find(|&i| fields_arr[i].is_empty());
                     if let Some(next) = next_empty {
-                        set_screen(app, next, width, height, mines);
+                        set_custom_game_screen(app, next, width, height, mines);
                     } else {
-                        // All fields filled — attempt to start
                         if let Some(d) = validate(&width, &height, &mines) { start_game(app, d); }
                     }
                 }
@@ -282,7 +270,7 @@ fn dispatch_custom_game(
             let mut fields = [width, height, mines];
             fields[field].pop();
             let [w, h, m] = fields;
-            set_screen(app, field, w, h, m);
+            set_custom_game_screen(app, field, w, h, m);
         }
         // Digit input: only on text fields
         GameAction::TypeChar(c) if c.is_ascii_digit() && field < 3 => {
@@ -291,11 +279,11 @@ fn dispatch_custom_game(
                 fields[field].push(c);
             }
             let [w, h, m] = fields;
-            set_screen(app, field, w, h, m);
+            set_custom_game_screen(app, field, w, h, m);
         }
         // Mouse click on a field row selects it
-        GameAction::SelectGameOverItem(idx) | GameAction::HoverGameOverItem(idx) if idx < 3 => {
-            set_screen(app, idx, width, height, mines);
+        GameAction::MenuSelect(idx) | GameAction::MenuHover(idx) if idx < 3 => {
+            set_custom_game_screen(app, idx, width, height, mines);
         }
         _ => {}
     }
@@ -326,23 +314,27 @@ fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u
     let newly_revealed: Vec<(u16, u16)> = match action {
         GameAction::Reveal => {
             let cell = game.board.get(target.0, target.1);
-            if cell.visibility == minesweepe_rs::types::CellVisibility::Revealed {
-                game::chord(game, target.0, target.1)
+            if cell.visibility == CellVisibility::Revealed {
+                game::chord_reveal(game, target.0, target.1)
             } else {
                 game::reveal(game, target.0, target.1)
             }
         }
-        GameAction::CycleFlag => { game::cycle_flag(game, target.0, target.1); vec![] }
-        GameAction::Chord     => game::chord(game, target.0, target.1),
+        GameAction::CycleFlag => {
+            let cell = game.board.get(target.0, target.1);
+            if cell.visibility == CellVisibility::Revealed {
+                game::chord_flag(game, target.0, target.1);
+                vec![]
+            } else {
+                game::cycle_flag(game, target.0, target.1);
+                vec![]
+            }
+        }
         _ => vec![],
     };
 
-    let flag_changed = matches!(action, GameAction::CycleFlag);
-    let was_lost = matches!(app.game.as_ref().map(|g| &g.status), Some(GameStatus::Lost { .. }));
-
     if !newly_revealed.is_empty() {
-        // Apply coalesce effect to each newly revealed cell individually.
-        let (tw, th) = crossterm::terminal::size().unwrap_or((80, 24));
+        let (tw, th) = term_size();
         if let Some(game) = &app.game {
             let origin = tui::board_origin(tw, th, &game.config);
             let stride_w = CELL_WIDTH + BORDER_COL;
@@ -357,54 +349,36 @@ fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u
         }
     }
 
-    if !newly_revealed.is_empty() || flag_changed || was_lost {
-        check_game_over(app);
-    }
+    check_game_over(app);
 }
 
-fn dispatch_game_over(app: &mut App, action: GameAction, selected: usize) {
+fn dispatch_game_over(app: &mut App, action: GameAction, selected: usize, won: bool) {
+    fn confirm(app: &mut App, idx: usize) {
+        match idx {
+            0 => {
+                if let Some(game) = &app.game {
+                    let difficulty = game.difficulty;
+                    start_game(app, difficulty);
+                }
+            }
+            1 => app.screen = Screen::MainMenu { selected: 0 },
+            _ => app.should_quit = true,
+        }
+    }
     let item_count = GAME_OVER_ITEMS.len();
     match action {
         GameAction::Quit     => app.should_quit = true,
         GameAction::OpenMenu => app.screen = Screen::MainMenu { selected: 0 },
-        // Keyboard navigation
         GameAction::MoveCursor(0, -1) => {
-            app.screen = Screen::GameOver {
-                won: matches!(app.screen, Screen::GameOver { won: true, .. }),
-                selected: selected.saturating_sub(1),
-            };
+            app.screen = Screen::GameOver { won, selected: selected.saturating_sub(1) };
         }
         GameAction::MoveCursor(0, 1) => {
-            app.screen = Screen::GameOver {
-                won: matches!(app.screen, Screen::GameOver { won: true, .. }),
-                selected: (selected + 1).min(item_count - 1),
-            };
+            app.screen = Screen::GameOver { won, selected: (selected + 1).min(item_count - 1) };
         }
-        GameAction::Reveal => confirm_game_over(app, selected),
-        // Mouse: hover updates selected highlight
-        GameAction::HoverGameOverItem(idx) => {
-            app.screen = Screen::GameOver {
-                won: matches!(app.screen, Screen::GameOver { won: true, .. }),
-                selected: idx,
-            };
-        }
-        // Mouse: click confirms
-        GameAction::SelectGameOverItem(idx) => confirm_game_over(app, idx),
+        GameAction::Reveal          => confirm(app, selected),
+        GameAction::MenuSelect(idx) => confirm(app, idx),
+        GameAction::MenuHover(idx)  => app.screen = Screen::GameOver { won, selected: idx },
         _ => {}
-    }
-}
-
-fn confirm_game_over(app: &mut App, selected: usize) {
-    match selected {
-        0 => {
-            // New Game
-            if let Some(game) = &app.game {
-                let difficulty = game.difficulty;
-                start_game(app, difficulty);
-            }
-        }
-        1 => app.screen = Screen::MainMenu { selected: 0 },
-        _ => app.should_quit = true,
     }
 }
 
@@ -413,8 +387,7 @@ fn dispatch_leaderboard(app: &mut App, action: GameAction, tab: LeaderboardTab) 
         GameAction::OpenMenu | GameAction::Quit => app.screen = Screen::MainMenu { selected: 0 },
         GameAction::MoveCursor(1, 0)            => app.screen = Screen::Leaderboard { tab: tab.next() },
         GameAction::MoveCursor(-1, 0)           => app.screen = Screen::Leaderboard { tab: tab.prev() },
-        // Mouse click on a tab zone (0=Beginner, 1=Intermediate, 2=Expert)
-        GameAction::SelectGameOverItem(idx) => {
+        GameAction::MenuSelect(idx) => {
             let new_tab = match idx {
                 0 => LeaderboardTab::Beginner,
                 1 => LeaderboardTab::Intermediate,
@@ -448,7 +421,7 @@ fn check_game_over(app: &mut App) {
             app.screen = Screen::GameOver { won: true, selected: 0 };
         }
         GameStatus::Lost { .. } => {
-            let (tw, th) = crossterm::terminal::size().unwrap_or((80, 24));
+            let (tw, th) = term_size();
             let det_rect = tui::board_rect(tw, th, &game.config);
             app.effects.push((detonate_effect(), det_rect));
             app.screen = Screen::GameOver { won: false, selected: 0 };

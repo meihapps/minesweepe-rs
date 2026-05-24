@@ -54,12 +54,12 @@ pub fn draw(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
             }
             Screen::Playing => {
                 if let Some(game) = &app.game {
-                    draw_game(frame, area, game, app.active_cell, app.cell_active);
+                    draw_game(frame, area, game, app.active_cell, app.cell_active, None);
                 }
             }
             Screen::GameOver { won, selected } => {
                 if let Some(game) = &app.game {
-                    draw_game_over(frame, area, game, app.active_cell, app.cell_active, *won, *selected);
+                    draw_game(frame, area, game, app.active_cell, app.cell_active, Some((*won, *selected)));
                 }
             }
             Screen::Leaderboard { tab } => {
@@ -259,92 +259,78 @@ fn draw_custom_game_menu(
 // Game board
 // ---------------------------------------------------------------------------
 
+/// Draws the game board and surrounding UI.
+/// `game_over` is Some((won, selected)) when the game has ended, adding a
+/// result header and footer menu; None renders the normal status bar.
 fn draw_game(
     frame: &mut ratatui::Frame,
     area: Rect,
     game: &crate::types::GameState,
     active_cell: (u16, u16),
     cell_active: bool,
+    game_over: Option<(bool, usize)>,
 ) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
-        .split(area);
+    if let Some((won, selected)) = game_over {
+        let secs = game.elapsed.as_secs();
+        let time_str = format!("{:02}:{:02}", secs / 60, secs % 60);
+        let (result_text, result_color) = if won {
+            ("✓ You Win!", Color::Green)
+        } else {
+            ("✗ Game Over", Color::Red)
+        };
+        let header_line = Line::from(vec![
+            Span::styled(
+                format!("  {}  ", result_text),
+                Style::default().fg(result_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(time_str, Style::default().fg(Color::White)),
+            Span::raw("          "),
+            Span::styled(
+                format!("[{}]", game.difficulty.label()),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]);
+        let header = Paragraph::new(header_line)
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Center);
 
-    draw_status_bar(frame, chunks[0], game);
-    draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config);
-}
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+            .split(area);
 
-/// Game over screen: board stays fully visible, result replaces the status bar,
-/// and menu items appear below the board in any remaining space.
-fn draw_game_over(
-    frame: &mut ratatui::Frame,
-    area: Rect,
-    game: &crate::types::GameState,
-    active_cell: (u16, u16),
-    cell_active: bool,
-    won: bool,
-    selected: usize,
-) {
-    let secs = game.elapsed.as_secs();
-    let time_str = format!("{:02}:{:02}", secs / 60, secs % 60);
-    let (result_text, result_color) = if won {
-        ("✓ You Win!", Color::Green)
+        frame.render_widget(header, chunks[0]);
+        draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config);
+
+        let items: Vec<Span> = GAME_OVER_ITEMS.iter().enumerate().flat_map(|(i, item)| {
+            let style = if i == selected {
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let sep = if i > 0 {
+                vec![Span::styled("  |  ", Style::default().fg(Color::DarkGray))]
+            } else {
+                vec![]
+            };
+            sep.into_iter().chain(std::iter::once(Span::styled(format!("[ {} ]", item), style)))
+        }).collect();
+        let footer = Paragraph::new(Line::from(items))
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Center);
+        frame.render_widget(footer, chunks[2]);
     } else {
-        ("✗ Game Over", Color::Red)
-    };
-
-    // Header bar: result + time (replaces status bar)
-    let header_line = Line::from(vec![
-        Span::styled(
-            format!("  {}  ", result_text),
-            Style::default().fg(result_color).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(time_str, Style::default().fg(Color::White)),
-        Span::raw("          "),
-        Span::styled(
-            format!("[{}]", game.difficulty.label()),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
-    let header = Paragraph::new(header_line)
-        .block(Block::default().borders(Borders::ALL))
-        .alignment(Alignment::Center);
-
-    let footer_h = 3u16;
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),       // header
-            Constraint::Min(0),          // board + remaining space
-            Constraint::Length(footer_h), // footer menu
-        ])
-        .split(area);
-
-    frame.render_widget(header, chunks[0]);
-    draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config);
-
-    // Footer menu: items in a single centered line
-    let items: Vec<Span> = GAME_OVER_ITEMS.iter().enumerate().flat_map(|(i, item)| {
-        let style = if i == selected {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-        let sep = if i > 0 {
-            vec![Span::styled("  |  ", Style::default().fg(Color::DarkGray))]
-        } else {
-            vec![]
-        };
-        sep.into_iter().chain(std::iter::once(Span::styled(format!("[ {} ]", item), style)))
-    }).collect();
-
-    let footer = Paragraph::new(Line::from(items))
-        .block(Block::default().borders(Borders::ALL))
-        .alignment(Alignment::Center);
-    frame.render_widget(footer, chunks[2]);
+        // Playing: same 3-chunk layout as game over so the board occupies the
+        // same vertical space in both states — no shift on transition.
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+            .split(area);
+        draw_status_bar(frame, chunks[0], game);
+        draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config);
+        // chunks[2] intentionally empty — holds space for the footer slot.
+    }
 }
 
 fn draw_status_bar(
@@ -684,7 +670,7 @@ pub fn game_over_item_rects(term_size: (u16, u16)) -> [Rect; 3] {
 /// Returns the popup Rect and the row of the first main menu item.
 /// Layout: border + title_line + "" = 2 lines before items.
 pub fn main_menu_item_rows(area: Rect) -> (u16, Rect) {
-    let popup = centered_rect_pub(40, 50, area);
+    let popup = centered_rect(40, 50, area);
     let first_item_row = popup.y + 1 + 2; // border + title + blank
     (first_item_row, popup)
 }
@@ -692,7 +678,7 @@ pub fn main_menu_item_rows(area: Rect) -> (u16, Rect) {
 /// Returns the popup Rect and the row of the first new-game menu item.
 /// Layout: border = 1 line before items (no title line or blank).
 pub fn new_game_menu_item_rows(area: Rect) -> (u16, Rect) {
-    let popup = centered_rect_pub(50, 60, area);
+    let popup = centered_rect(50, 60, area);
     let first_item_row = popup.y + 1; // border only
     (first_item_row, popup)
 }
@@ -700,7 +686,7 @@ pub fn new_game_menu_item_rows(area: Rect) -> (u16, Rect) {
 /// Returns the popup Rect and the row of the first custom game field.
 /// Layout: border(1) + ""(1) + "Custom Game"(1) + ""(1) = 4 lines before fields.
 pub fn custom_game_field_rows(area: Rect) -> (u16, Rect) {
-    let popup = centered_rect_pub(40, 60, area);
+    let popup = centered_rect(40, 60, area);
     let first_field_row = popup.y + 1 + 3; // border + blank + title + blank
     (first_field_row, popup)
 }
@@ -889,7 +875,7 @@ pub fn translate_event(
                         } else if mouse.row == back_row && mouse.column >= back_x && mouse.column < back_x + back_w {
                             Some(GameEvent { action: GameAction::OpenMenu, board_pos: None })
                         } else if mouse.row >= first_row && mouse.row <= last_row {
-                            Some(GameEvent { action: GameAction::SelectGameOverItem((mouse.row - first_row) as usize), board_pos: None })
+                            Some(GameEvent { action: GameAction::MenuSelect((mouse.row - first_row) as usize), board_pos: None })
                         } else {
                             None
                         }
@@ -900,7 +886,7 @@ pub fn translate_event(
                         } else if mouse.row == back_row && mouse.column >= back_x && mouse.column < back_x + back_w {
                             Some(GameEvent { action: GameAction::HoverBack, board_pos: None })
                         } else if mouse.row >= first_row && mouse.row <= last_row {
-                            Some(GameEvent { action: GameAction::HoverGameOverItem((mouse.row - first_row) as usize), board_pos: None })
+                            Some(GameEvent { action: GameAction::MenuHover((mouse.row - first_row) as usize), board_pos: None })
                         } else {
                             Some(GameEvent { action: GameAction::ClearUiHover, board_pos: None })
                         }
@@ -934,7 +920,7 @@ fn translate_main_menu_click(
         MouseEventKind::Down(MouseButton::Left) => {
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::SelectGameOverItem(idx), board_pos: None })
+                Some(GameEvent { action: GameAction::MenuSelect(idx), board_pos: None })
             } else {
                 None
             }
@@ -942,7 +928,7 @@ fn translate_main_menu_click(
         MouseEventKind::Moved => {
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::HoverGameOverItem(idx), board_pos: None })
+                Some(GameEvent { action: GameAction::MenuHover(idx), board_pos: None })
             } else {
                 None
             }
@@ -980,7 +966,7 @@ fn translate_new_game_menu_click(
             }
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::SelectGameOverItem(idx), board_pos: None })
+                Some(GameEvent { action: GameAction::MenuSelect(idx), board_pos: None })
             } else {
                 None
             }
@@ -994,7 +980,7 @@ fn translate_new_game_menu_click(
             }
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::HoverGameOverItem(idx), board_pos: None })
+                Some(GameEvent { action: GameAction::MenuHover(idx), board_pos: None })
             } else {
                 Some(GameEvent { action: GameAction::ClearUiHover, board_pos: None })
             }
@@ -1023,7 +1009,7 @@ fn translate_leaderboard_click(
                 for (i, rect) in tab_rects.iter().enumerate() {
                     if mouse.column >= rect.x && mouse.column < rect.x + rect.width {
                         return Some(GameEvent {
-                            action: GameAction::SelectGameOverItem(i),
+                            action: GameAction::MenuSelect(i),
                             board_pos: None,
                         });
                     }
@@ -1042,7 +1028,7 @@ fn translate_leaderboard_click(
                 for (i, rect) in tab_rects.iter().enumerate() {
                     if mouse.column >= rect.x && mouse.column < rect.x + rect.width {
                         return Some(GameEvent {
-                            action: GameAction::HoverGameOverItem(i),
+                            action: GameAction::MenuHover(i),
                             board_pos: None,
                         });
                     }
@@ -1069,7 +1055,7 @@ fn translate_game_over_click(
                 for (i, rect) in rects.iter().enumerate() {
                     if mouse.column >= rect.x && mouse.column < rect.x + rect.width {
                         return Some(GameEvent {
-                            action: GameAction::SelectGameOverItem(i),
+                            action: GameAction::MenuSelect(i),
                             board_pos: None,
                         });
                     }
@@ -1082,7 +1068,7 @@ fn translate_game_over_click(
                 for (i, rect) in rects.iter().enumerate() {
                     if mouse.column >= rect.x && mouse.column < rect.x + rect.width {
                         return Some(GameEvent {
-                            action: GameAction::HoverGameOverItem(i),
+                            action: GameAction::MenuHover(i),
                             board_pos: None,
                         });
                     }
@@ -1169,10 +1155,7 @@ fn translate_mouse(
 /// Used to scope tachyonfx effects to the board area.
 pub fn board_rect(term_width: u16, term_height: u16, config: &crate::types::GameConfig) -> Rect {
     let origin = board_origin(term_width, term_height, config);
-    let stride_w = CELL_WIDTH + BORDER_COL;
-    let stride_h = CELL_HEIGHT + BORDER_ROW;
-    let w = config.width  * stride_w + BORDER_COL;
-    let h = config.height * stride_h + BORDER_ROW;
+    let (w, h) = crate::types::board_render_size(config);
     Rect::new(origin.0, origin.1, w, h)
 }
 
@@ -1181,14 +1164,9 @@ pub fn board_origin(
     term_height: u16,
     config: &crate::types::GameConfig,
 ) -> (u16, u16) {
-    // Must exactly match draw_board's board_w/board_h calculation.
-    let stride_w = CELL_WIDTH + BORDER_COL;
-    let stride_h = CELL_HEIGHT + BORDER_ROW;
-    let board_w  = config.width  * stride_w + BORDER_COL;
-    let board_h  = config.height * stride_h + BORDER_ROW;
-    // Status bar takes 3 rows; board is centered in the remaining space.
-    let available_h = term_height.saturating_sub(3);
-
+    let (board_w, board_h) = crate::types::board_render_size(config);
+    // Header (3 rows) + footer (3 rows) = 6 rows reserved; board centers in the rest.
+    let available_h = term_height.saturating_sub(6);
     let ox = (term_width.saturating_sub(board_w)) / 2;
     let oy = 3 + (available_h.saturating_sub(board_h)) / 2;
     (ox, oy)
@@ -1199,11 +1177,7 @@ pub fn board_origin(
 // ---------------------------------------------------------------------------
 
 /// Returns a centered Rect of the given percentage dimensions within `area`.
-pub fn centered_rect_pub(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    centered_rect(percent_x, percent_y, area)
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vert = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

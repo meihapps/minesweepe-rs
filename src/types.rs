@@ -240,10 +240,6 @@ impl GameState {
         }
     }
 
-    pub fn new_custom(width: u16, height: u16, mine_count: u16) -> Self {
-        Self::new(Difficulty::Custom(width, height, mine_count))
-    }
-
     pub fn remaining_mines(&self) -> i32 {
         self.config.mine_count as i32 - self.flags_placed as i32
     }
@@ -257,33 +253,33 @@ impl GameState {
 // Input actions
 // ---------------------------------------------------------------------------
 
-/// Logical game actions, translated from raw crossterm events.
+/// Game and navigation actions translated from input events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameAction {
-    /// Reveal a hidden cell, or chord if the cell is already revealed.
+    // --- Board actions ---
     Reveal,
-    /// Cycle flag state: Hidden → Flagged → Question → Hidden.
     CycleFlag,
-    /// Chord: reveal all non-flagged neighbours of a revealed number cell,
-    /// if its flagged-neighbour count equals its adjacent_mines value.
-    Chord,
-    /// Move the keyboard cursor by (dx, dy) in board space.
+    /// Move the keyboard cursor by (dx, dy) in board/menu space.
     MoveCursor(i16, i16),
+
+    // --- Navigation ---
     OpenMenu,
     Quit,
-    /// Type a character (used for custom game config input).
+
+    // --- Text input (custom game screen only) ---
     TypeChar(char),
-    /// Backspace (used for custom game config input).
     Backspace,
-    /// Directly select a game-over menu item by index (from mouse click).
-    SelectGameOverItem(usize),
-    /// Hover over a game-over menu item (from mouse move), updating selected.
-    HoverGameOverItem(usize),
-    /// Hover over the back button on any screen.
+
+    // --- UI interaction ---
+    /// Click a menu item by index.
+    MenuSelect(usize),
+    /// Hover over a menu item by index.
+    MenuHover(usize),
+    /// Hover over the Back button.
     HoverBack,
-    /// Hover over the start button on the custom game screen.
+    /// Hover over the Start button (custom game screen).
     HoverStart,
-    /// Clear any UI hover state (mouse moved off a hotspot).
+    /// Mouse moved off all hotspots — clear hover state.
     ClearUiHover,
 }
 
@@ -379,7 +375,6 @@ pub enum UiHover {
     Back,
     Start,
     Tab(usize),
-    MenuItem(usize),
 }
 
 pub struct App {

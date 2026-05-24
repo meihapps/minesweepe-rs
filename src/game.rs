@@ -137,39 +137,21 @@ fn reveal_all_mines(board: &mut Board) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Chord
-// ---------------------------------------------------------------------------
 
-/// Chords a revealed number cell: if the number of flagged neighbours equals
-/// adjacent_mines, reveals all non-flagged hidden neighbours.
-///
-/// Does nothing if the cell is not revealed, has no adjacent mines, or the
-/// flagged-neighbour count doesn't match.
-pub fn chord(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
+/// Reveals all hidden (non-flagged) neighbours of a revealed cell, no safety check.
+pub fn chord_reveal(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
     let cell = state.board.get(x, y);
-    if cell.visibility != CellVisibility::Revealed || cell.adjacent_mines == 0 {
+    if cell.visibility != CellVisibility::Revealed {
         return vec![];
     }
 
-    let flagged = state
-        .board
-        .neighbours(x, y)
-        .filter(|&(nx, ny)| state.board.get(nx, ny).visibility == CellVisibility::Flagged)
-        .count() as u8;
-
-    if flagged != cell.adjacent_mines {
-        return vec![];
-    }
-
-    // Collect neighbours to reveal before mutating.
     let to_reveal: Vec<(u16, u16)> = state
         .board
         .neighbours(x, y)
         .filter(|&(nx, ny)| state.board.get(nx, ny).visibility.is_hidden())
         .collect();
 
-    let mut all_revealed: Vec<(u16, u16)> = Vec::new();
+    let mut all_revealed = Vec::new();
     for (nx, ny) in to_reveal {
         let newly = reveal(state, nx, ny);
         all_revealed.extend(newly);
@@ -178,6 +160,25 @@ pub fn chord(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
         }
     }
     all_revealed
+}
+
+/// Flags all hidden neighbours of a revealed cell, no safety check.
+pub fn chord_flag(state: &mut GameState, x: u16, y: u16) {
+    let cell = state.board.get(x, y);
+    if cell.visibility != CellVisibility::Revealed {
+        return;
+    }
+
+    let to_flag: Vec<(u16, u16)> = state
+        .board
+        .neighbours(x, y)
+        .filter(|&(nx, ny)| state.board.get(nx, ny).visibility.is_hidden())
+        .collect();
+
+    for (nx, ny) in to_flag {
+        state.board.get_mut(nx, ny).visibility = CellVisibility::Flagged;
+        state.flags_placed += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------
