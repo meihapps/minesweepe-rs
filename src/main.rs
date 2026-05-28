@@ -2,16 +2,18 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event};
 
-use ratatui::layout::Rect;
 use minesweepe_rs::game;
 use minesweepe_rs::game::{detonate_effect, reveal_effect};
 use minesweepe_rs::leaderboard;
+use minesweepe_rs::pregen::PregenHandle;
+use minesweepe_rs::solver;
 use minesweepe_rs::tui;
 use minesweepe_rs::tui::{GAME_OVER_ITEMS, MAIN_MENU_ITEMS, NEW_GAME_ITEMS};
 use minesweepe_rs::types::{
-    App, CellVisibility, Difficulty, GameAction, GameState, GameStatus, LeaderboardTab, Screen, UiHover,
-    BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
+    App, CellVisibility, Difficulty, GameAction, GameState, GameStatus, HintState, LeaderboardTab,
+    Screen, UiHover, BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
 };
+use ratatui::layout::Rect;
 
 const TICK_RATE: Duration = Duration::from_millis(250);
 const EFFECT_TICK: Duration = Duration::from_millis(16); // ~60fps when effects running
@@ -20,8 +22,9 @@ fn main() -> anyhow::Result<()> {
     let lb = leaderboard::load();
     let mut app = App::new(lb);
     let mut terminal = tui::init()?;
+    let pregen = PregenHandle::new();
 
-    let result = run(&mut terminal, &mut app);
+    let result = run(&mut terminal, &mut app, &pregen);
 
     tui::restore(&mut terminal)?;
     leaderboard::save(&app.leaderboard);
@@ -32,18 +35,22 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run(terminal: &mut tui::Tui, app: &mut App) -> anyhow::Result<()> {
+fn run(terminal: &mut tui::Tui, app: &mut App, pregen: &PregenHandle) -> anyhow::Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
         tui::draw(terminal, app)?;
 
         // Use faster tick while effects are running for smooth animation.
-        let tick = if !app.effects.is_empty() { EFFECT_TICK } else { TICK_RATE };
+        let tick = if !app.effects.is_empty() {
+            EFFECT_TICK
+        } else {
+            TICK_RATE
+        };
         let timeout = tick.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
             let raw = event::read()?;
-            handle_event(app, &raw);
+            handle_event(app, &raw, pregen);
         }
 
         if last_tick.elapsed() >= TICK_RATE {
@@ -79,25 +86,33 @@ fn term_size() -> (u16, u16) {
     crossterm::terminal::size().unwrap_or((80, 24))
 }
 
-fn handle_event(app: &mut App, event: &Event) {
+fn handle_event(app: &mut App, event: &Event, pregen: &PregenHandle) {
     let (tw, th) = term_size();
 
-    let board_origin = app.game.as_ref().map_or((0, 0), |g| {
-        tui::board_origin(tw, th, &g.config)
-    });
-    let board_size = app.game.as_ref().map_or((0, 0), |g| {
-        (g.config.width, g.config.height)
-    });
+    let board_origin = app
+        .game
+        .as_ref()
+        .map_or((0, 0), |g| tui::board_origin(tw, th, &g.config));
+    let board_size = app
+        .game
+        .as_ref()
+        .map_or((0, 0), |g| (g.config.width, g.config.height));
 
-    let Some(ev) = tui::translate_event(event, board_origin, board_size, (tw, th), &app.screen) else {
+    let Some(ev) = tui::translate_event(event, board_origin, board_size, (tw, th), &app.screen)
+    else {
         return;
     };
 
     // UI hover actions — update ui_hover and return, never dispatch further.
     match ev.action {
-        GameAction::HoverBack  => { app.ui_hover = Some(UiHover::Back);  return; }
-        GameAction::HoverStart => { app.ui_hover = Some(UiHover::Start); return; }
-        GameAction::ClearUiHover => { app.ui_hover = None; return; }
+        GameAction::HoverBack => {
+            app.ui_hover = Some(UiHover::Back);
+            return;
+        }
+        GameAction::ClearUiHover => {
+            app.ui_hover = None;
+            return;
+        }
         GameAction::MenuHover(i) => {
             // On leaderboard this means tab hover; on other screens it's menu item hover.
             // Only set ui_hover here for leaderboard; other screens handle it in dispatch.
@@ -110,10 +125,13 @@ fn handle_event(app: &mut App, event: &Event) {
         _ => {}
     }
 
-    // Mouse move on board: take over active_cell.
+    // Mouse move on board: take over active_cell and submit pregen job if applicable.
     if ev.action == GameAction::MoveCursor(0, 0) {
         if let Some(pos) = ev.board_pos {
             app.mouse_controlling = true;
+            if pos != app.active_cell || !app.cell_active {
+                maybe_submit_pregen(app, pregen, pos);
+            }
             app.active_cell = pos;
             app.cell_active = true;
         }
@@ -130,23 +148,36 @@ fn handle_event(app: &mut App, event: &Event) {
     // Clear ui_hover on any confirmed action.
     app.ui_hover = None;
 
-    dispatch(app, ev.action, ev.board_pos);
+    dispatch(app, ev.action, ev.board_pos, pregen);
+}
+
+/// Submits a pregen job for `pos` when the game is in PreGame state.
+fn maybe_submit_pregen(app: &App, pregen: &PregenHandle, pos: (u16, u16)) {
+    if matches!(app.screen, Screen::Playing) {
+        if let Some(game) = &app.game {
+            if game.status == GameStatus::PreGame {
+                pregen.submit(pos, game.config);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Action dispatch
 // ---------------------------------------------------------------------------
 
-fn dispatch(app: &mut App, action: GameAction, board_pos: Option<(u16, u16)>) {
+fn dispatch(
+    app: &mut App,
+    action: GameAction,
+    board_pos: Option<(u16, u16)>,
+    pregen: &PregenHandle,
+) {
     match app.screen.clone() {
-        Screen::MainMenu { selected }    => dispatch_main_menu(app, action, selected),
+        Screen::MainMenu { selected } => dispatch_main_menu(app, action, selected),
         Screen::NewGameMenu { selected } => dispatch_new_game_menu(app, action, selected),
-        Screen::CustomGame { field, width, height, mines } => {
-            dispatch_custom_game(app, action, field, width, height, mines);
-        }
-        Screen::Playing                  => dispatch_playing(app, action, board_pos),
+        Screen::Playing => dispatch_playing(app, action, board_pos, pregen),
         Screen::GameOver { selected, won } => dispatch_game_over(app, action, selected, won),
-        Screen::Leaderboard { tab }      => dispatch_leaderboard(app, action, tab),
+        Screen::Leaderboard { tab } => dispatch_leaderboard(app, action, tab),
     }
 }
 
@@ -154,7 +185,11 @@ fn dispatch_main_menu(app: &mut App, action: GameAction, selected: usize) {
     fn confirm(app: &mut App, idx: usize) {
         match idx {
             0 => app.screen = Screen::NewGameMenu { selected: 0 },
-            1 => app.screen = Screen::Leaderboard { tab: LeaderboardTab::Beginner },
+            1 => {
+                app.screen = Screen::Leaderboard {
+                    tab: LeaderboardTab::Beginner,
+                }
+            }
             _ => app.should_quit = true,
         }
     }
@@ -162,14 +197,18 @@ fn dispatch_main_menu(app: &mut App, action: GameAction, selected: usize) {
     match action {
         GameAction::Quit => app.should_quit = true,
         GameAction::MoveCursor(0, -1) => {
-            app.screen = Screen::MainMenu { selected: selected.saturating_sub(1) };
+            app.screen = Screen::MainMenu {
+                selected: selected.saturating_sub(1),
+            };
         }
         GameAction::MoveCursor(0, 1) => {
-            app.screen = Screen::MainMenu { selected: (selected + 1).min(item_count - 1) };
+            app.screen = Screen::MainMenu {
+                selected: (selected + 1).min(item_count - 1),
+            };
         }
-        GameAction::Reveal            => confirm(app, selected),
-        GameAction::MenuSelect(idx)   => confirm(app, idx),
-        GameAction::MenuHover(idx)    => app.screen = Screen::MainMenu { selected: idx },
+        GameAction::Reveal => confirm(app, selected),
+        GameAction::MenuSelect(idx) => confirm(app, idx),
+        GameAction::MenuHover(idx) => app.screen = Screen::MainMenu { selected: idx },
         _ => {}
     }
 }
@@ -179,13 +218,7 @@ fn dispatch_new_game_menu(app: &mut App, action: GameAction, selected: usize) {
         match idx {
             0 => start_game(app, Difficulty::Beginner),
             1 => start_game(app, Difficulty::Intermediate),
-            2 => start_game(app, Difficulty::Expert),
-            _ => app.screen = Screen::CustomGame {
-                field: 0,
-                width: String::new(),
-                height: String::new(),
-                mines: String::new(),
-            },
+            _ => start_game(app, Difficulty::Expert),
         }
     }
     let item_count = NEW_GAME_ITEMS.len();
@@ -194,102 +227,28 @@ fn dispatch_new_game_menu(app: &mut App, action: GameAction, selected: usize) {
             app.screen = Screen::MainMenu { selected: 0 };
         }
         GameAction::MoveCursor(0, -1) => {
-            app.screen = Screen::NewGameMenu { selected: selected.saturating_sub(1) };
+            app.screen = Screen::NewGameMenu {
+                selected: selected.saturating_sub(1),
+            };
         }
         GameAction::MoveCursor(0, 1) => {
-            app.screen = Screen::NewGameMenu { selected: (selected + 1).min(item_count - 1) };
+            app.screen = Screen::NewGameMenu {
+                selected: (selected + 1).min(item_count - 1),
+            };
         }
-        GameAction::Reveal          => confirm(app, selected),
+        GameAction::Reveal => confirm(app, selected),
         GameAction::MenuSelect(idx) => confirm(app, idx),
-        GameAction::MenuHover(idx)  => app.screen = Screen::NewGameMenu { selected: idx },
+        GameAction::MenuHover(idx) => app.screen = Screen::NewGameMenu { selected: idx },
         _ => {}
     }
 }
 
-fn set_custom_game_screen(app: &mut App, field: usize, width: String, height: String, mines: String) {
-    app.screen = Screen::CustomGame { field, width, height, mines };
-}
-
-fn dispatch_custom_game(
+fn dispatch_playing(
     app: &mut App,
     action: GameAction,
-    field: usize,
-    width: String,
-    height: String,
-    mines: String,
+    board_pos: Option<(u16, u16)>,
+    pregen: &PregenHandle,
 ) {
-    // 5 tab stops: 0=Width, 1=Height, 2=Mines, 3=Start, 4=Back
-    const TOTAL_STOPS: usize = 5;
-
-    let validate = |w: &str, h: &str, m: &str| -> Option<Difficulty> {
-        let w: u16 = w.parse().unwrap_or(0);
-        let h: u16 = h.parse().unwrap_or(0);
-        let m: u16 = m.parse().unwrap_or(0);
-        let max_mines = w.saturating_mul(h).saturating_sub(9);
-        if w >= 4 && h >= 4 && m >= 1 && m <= max_mines {
-            Some(Difficulty::Custom(w, h, m))
-        } else {
-            None
-        }
-    };
-
-    match action {
-        GameAction::OpenMenu | GameAction::Quit => {
-            app.screen = Screen::NewGameMenu { selected: 3 };
-        }
-        // Tab: cycle through all 5 stops forward
-        GameAction::MoveCursor(0, 1) => {
-            set_custom_game_screen(app, (field + 1) % TOTAL_STOPS, width, height, mines);
-        }
-        // Shift-tab / up: cycle backward
-        GameAction::MoveCursor(0, -1) => {
-            set_custom_game_screen(app, (field + TOTAL_STOPS - 1) % TOTAL_STOPS, width, height, mines);
-        }
-        GameAction::Reveal => {
-            match field {
-                // On Start button: attempt to start
-                3 => { if let Some(d) = validate(&width, &height, &mines) { start_game(app, d); } }
-                // On Back button: go back
-                4 => { app.screen = Screen::NewGameMenu { selected: 3 }; }
-                // On a text field: advance to next empty field, or start if all filled
-                _ => {
-                    let fields_arr = [&width, &height, &mines];
-                    let next_empty = (1..3)
-                        .map(|i| (field + i) % 3)
-                        .find(|&i| fields_arr[i].is_empty());
-                    if let Some(next) = next_empty {
-                        set_custom_game_screen(app, next, width, height, mines);
-                    } else {
-                        if let Some(d) = validate(&width, &height, &mines) { start_game(app, d); }
-                    }
-                }
-            }
-        }
-        // Backspace: only on text fields
-        GameAction::Backspace if field < 3 => {
-            let mut fields = [width, height, mines];
-            fields[field].pop();
-            let [w, h, m] = fields;
-            set_custom_game_screen(app, field, w, h, m);
-        }
-        // Digit input: only on text fields
-        GameAction::TypeChar(c) if c.is_ascii_digit() && field < 3 => {
-            let mut fields = [width, height, mines];
-            if fields[field].len() < 3 {
-                fields[field].push(c);
-            }
-            let [w, h, m] = fields;
-            set_custom_game_screen(app, field, w, h, m);
-        }
-        // Mouse click on a field row selects it
-        GameAction::MenuSelect(idx) | GameAction::MenuHover(idx) if idx < 3 => {
-            set_custom_game_screen(app, idx, width, height, mines);
-        }
-        _ => {}
-    }
-}
-
-fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u16)>) {
     match action {
         GameAction::Quit | GameAction::OpenMenu => {
             app.screen = Screen::MainMenu { selected: 0 };
@@ -298,13 +257,25 @@ fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u
         GameAction::MoveCursor(dx, dy) => {
             if let Some(game) = &app.game {
                 let new_pos = game::move_cursor(app.active_cell, dx, dy, &game.config);
+                let config = game.config;
+                let is_pregame = game.status == GameStatus::PreGame;
+                if is_pregame && new_pos != app.active_cell {
+                    pregen.submit(new_pos, config);
+                }
                 app.active_cell = new_pos;
                 app.cell_active = true;
             }
             return;
         }
+        GameAction::Hint => {
+            handle_hint(app);
+            return;
+        }
         _ => {}
     }
+
+    // Any board-modifying action clears the active hint.
+    app.hint = None;
 
     // Mouse actions use the clicked position; keyboard actions use active_cell.
     let target = board_pos.unwrap_or(app.active_cell);
@@ -317,6 +288,13 @@ fn dispatch_playing(app: &mut App, action: GameAction, board_pos: Option<(u16, u
             if cell.visibility == CellVisibility::Revealed {
                 game::chord_reveal(game, target.0, target.1)
             } else {
+                // Use the pre-generated board if it's ready and matches the target cell.
+                if game.status == GameStatus::PreGame {
+                    if let Some(pre_board) = pregen.take(target) {
+                        game.board = pre_board;
+                        game.status = GameStatus::Playing;
+                    }
+                }
                 game::reveal(game, target.0, target.1)
             }
         }
@@ -367,17 +345,23 @@ fn dispatch_game_over(app: &mut App, action: GameAction, selected: usize, won: b
     }
     let item_count = GAME_OVER_ITEMS.len();
     match action {
-        GameAction::Quit     => app.should_quit = true,
+        GameAction::Quit => app.should_quit = true,
         GameAction::OpenMenu => app.screen = Screen::MainMenu { selected: 0 },
-        GameAction::MoveCursor(0, -1) => {
-            app.screen = Screen::GameOver { won, selected: selected.saturating_sub(1) };
+        GameAction::MoveCursor(-1, 0) => {
+            app.screen = Screen::GameOver {
+                won,
+                selected: selected.saturating_sub(1),
+            };
         }
-        GameAction::MoveCursor(0, 1) => {
-            app.screen = Screen::GameOver { won, selected: (selected + 1).min(item_count - 1) };
+        GameAction::MoveCursor(1, 0) => {
+            app.screen = Screen::GameOver {
+                won,
+                selected: (selected + 1).min(item_count - 1),
+            };
         }
-        GameAction::Reveal          => confirm(app, selected),
+        GameAction::Reveal => confirm(app, selected),
         GameAction::MenuSelect(idx) => confirm(app, idx),
-        GameAction::MenuHover(idx)  => app.screen = Screen::GameOver { won, selected: idx },
+        GameAction::MenuHover(idx) => app.screen = Screen::GameOver { won, selected: idx },
         _ => {}
     }
 }
@@ -385,8 +369,8 @@ fn dispatch_game_over(app: &mut App, action: GameAction, selected: usize, won: b
 fn dispatch_leaderboard(app: &mut App, action: GameAction, tab: LeaderboardTab) {
     match action {
         GameAction::OpenMenu | GameAction::Quit => app.screen = Screen::MainMenu { selected: 0 },
-        GameAction::MoveCursor(1, 0)            => app.screen = Screen::Leaderboard { tab: tab.next() },
-        GameAction::MoveCursor(-1, 0)           => app.screen = Screen::Leaderboard { tab: tab.prev() },
+        GameAction::MoveCursor(1, 0) => app.screen = Screen::Leaderboard { tab: tab.next() },
+        GameAction::MoveCursor(-1, 0) => app.screen = Screen::Leaderboard { tab: tab.prev() },
         GameAction::MenuSelect(idx) => {
             let new_tab = match idx {
                 0 => LeaderboardTab::Beginner,
@@ -408,7 +392,85 @@ fn start_game(app: &mut App, difficulty: Difficulty) {
     app.active_cell = (0, 0);
     app.cell_active = false;
     app.mouse_controlling = true;
+    app.hint = None;
     app.screen = Screen::Playing;
+}
+
+fn handle_hint(app: &mut App) {
+    // ── TESTING ONLY: set to true to auto-apply basic hints and loop ─────────
+    const AUTO_APPLY_BASIC_HINTS: bool = false;
+    // ─────────────────────────────────────────────────────────────────────────
+
+    loop {
+        let Some(game) = &app.game else { return };
+        if !game.is_active() {
+            return;
+        }
+        if game.status == GameStatus::PreGame {
+            return;
+        }
+
+        let n = game.board.cells.len();
+        let mut revealed = vec![false; n];
+        let mut flagged = vec![false; n];
+        for (i, cell) in game.board.cells.iter().enumerate() {
+            revealed[i] = cell.visibility == CellVisibility::Revealed;
+            flagged[i] = cell.visibility == CellVisibility::Flagged;
+        }
+
+        let deduction = solver::hint(
+            &game.board,
+            &revealed,
+            &flagged,
+            game.flags_placed,
+            game.config.mine_count,
+        );
+
+        if let Some(game) = &mut app.game {
+            game.hint_used = true;
+        }
+
+        let Some(d) = deduction else {
+            app.hint = None;
+            return;
+        };
+
+        let is_basic = !d.uses_global;
+
+        if AUTO_APPLY_BASIC_HINTS && is_basic {
+            // Auto-apply: flag mines, reveal safe cells, then loop for next hint.
+            let mine_targets = d.mine_cells.clone();
+            let safe_targets = d.safe_cells.clone();
+            app.hint = None;
+            for (x, y) in mine_targets {
+                let cell = app.game.as_ref().unwrap().board.get(x, y);
+                if cell.visibility == CellVisibility::Hidden
+                    || cell.visibility == CellVisibility::Question
+                {
+                    game::cycle_flag(app.game.as_mut().unwrap(), x, y);
+                    // cycle once more if it landed on Question instead of Flagged
+                    if app.game.as_ref().unwrap().board.get(x, y).visibility
+                        == CellVisibility::Question
+                    {
+                        game::cycle_flag(app.game.as_mut().unwrap(), x, y);
+                    }
+                }
+            }
+            for (x, y) in safe_targets {
+                game::reveal(app.game.as_mut().unwrap(), x, y);
+            }
+            check_game_over(app);
+            // Continue loop to compute next hint.
+        } else {
+            app.hint = Some(HintState {
+                mine_targets: d.mine_cells,
+                safe_targets: d.safe_cells,
+                witnesses: d.witnesses,
+                uses_global: d.uses_global,
+            });
+            return;
+        }
+    }
 }
 
 fn check_game_over(app: &mut App) {
@@ -417,14 +479,23 @@ fn check_game_over(app: &mut App) {
         GameStatus::Won => {
             let elapsed = game.elapsed;
             let difficulty = game.difficulty;
-            leaderboard::submit(&mut app.leaderboard, difficulty, elapsed);
-            app.screen = Screen::GameOver { won: true, selected: 0 };
+            let hint_used = game.hint_used;
+            if !hint_used {
+                leaderboard::submit(&mut app.leaderboard, difficulty, elapsed);
+            }
+            app.screen = Screen::GameOver {
+                won: true,
+                selected: 0,
+            };
         }
         GameStatus::Lost { .. } => {
             let (tw, th) = term_size();
             let det_rect = tui::board_rect(tw, th, &game.config);
             app.effects.push((detonate_effect(), det_rect));
-            app.screen = Screen::GameOver { won: false, selected: 0 };
+            app.screen = Screen::GameOver {
+                won: false,
+                selected: 0,
+            };
         }
         _ => {}
     }

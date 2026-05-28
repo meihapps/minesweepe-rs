@@ -57,10 +57,6 @@ pub fn save(leaderboard: &Leaderboard) {
 /// qualifies for the top 10. Returns true if the entry was inserted (i.e. it
 /// made the leaderboard).
 pub fn submit(leaderboard: &mut Leaderboard, difficulty: Difficulty, time: Duration) -> bool {
-    if !difficulty.is_ranked() {
-        return false;
-    }
-
     let entry = ScoreEntry {
         difficulty,
         time,
@@ -83,9 +79,6 @@ pub fn submit(leaderboard: &mut Leaderboard, difficulty: Difficulty, time: Durat
 
 /// Returns whether a given time would qualify for the leaderboard.
 pub fn qualifies(leaderboard: &Leaderboard, difficulty: Difficulty, time: Duration) -> bool {
-    if !difficulty.is_ranked() {
-        return false;
-    }
     let entries = leaderboard.get(difficulty);
     entries.len() < Leaderboard::MAX_ENTRIES || entries.last().map_or(true, |e| time < e.time)
 }

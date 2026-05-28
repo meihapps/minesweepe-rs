@@ -153,8 +153,6 @@ pub enum Difficulty {
     Beginner,
     Intermediate,
     Expert,
-    /// (width, height, mine_count)
-    Custom(u16, u16, u16),
 }
 
 impl Difficulty {
@@ -163,12 +161,7 @@ impl Difficulty {
             Difficulty::Beginner     => GameConfig { width: 9,  height: 9,  mine_count: 10 },
             Difficulty::Intermediate => GameConfig { width: 16, height: 16, mine_count: 40 },
             Difficulty::Expert       => GameConfig { width: 30, height: 16, mine_count: 99 },
-            Difficulty::Custom(w, h, m) => GameConfig { width: w, height: h, mine_count: m },
         }
-    }
-
-    pub fn is_ranked(self) -> bool {
-        !matches!(self, Difficulty::Custom(..))
     }
 
     pub fn label(self) -> &'static str {
@@ -176,7 +169,6 @@ impl Difficulty {
             Difficulty::Beginner     => "Beginner",
             Difficulty::Intermediate => "Intermediate",
             Difficulty::Expert       => "Expert",
-            Difficulty::Custom(..)   => "Custom",
         }
     }
 }
@@ -188,13 +180,6 @@ pub struct GameConfig {
     pub mine_count: u16,
 }
 
-impl GameConfig {
-    /// Whether a full 3×3 safe zone is possible given the mine count.
-    /// Requires at least 10 non-mine cells so there's variation outside the safe zone.
-    pub fn allows_3x3_safe_zone(self) -> bool {
-        self.mine_count <= (self.width * self.height) - 10
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Game status
@@ -217,14 +202,14 @@ pub enum GameStatus {
 #[derive(Clone, Debug)]
 pub struct GameState {
     pub difficulty: Difficulty,
-    /// Live config — identical to difficulty.config() for ranked games,
-    /// user-specified for Custom.
     pub config: GameConfig,
     pub board: Board,
     pub status: GameStatus,
     /// Frozen on win/loss; ticking while Playing. Does not start until first click.
     pub elapsed: Duration,
     pub flags_placed: u16,
+    /// True if the player requested at least one hint during this game.
+    pub hint_used: bool,
 }
 
 impl GameState {
@@ -237,6 +222,7 @@ impl GameState {
             status: GameStatus::PreGame,
             elapsed: Duration::ZERO,
             flags_placed: 0,
+            hint_used: false,
         }
     }
 
@@ -261,14 +247,12 @@ pub enum GameAction {
     CycleFlag,
     /// Move the keyboard cursor by (dx, dy) in board/menu space.
     MoveCursor(i16, i16),
+    /// Request a hint for the current board state.
+    Hint,
 
     // --- Navigation ---
     OpenMenu,
     Quit,
-
-    // --- Text input (custom game screen only) ---
-    TypeChar(char),
-    Backspace,
 
     // --- UI interaction ---
     /// Click a menu item by index.
@@ -277,8 +261,6 @@ pub enum GameAction {
     MenuHover(usize),
     /// Hover over the Back button.
     HoverBack,
-    /// Hover over the Start button (custom game screen).
-    HoverStart,
     /// Mouse moved off all hotspots — clear hover state.
     ClearUiHover,
 }
@@ -299,7 +281,6 @@ pub struct GameEvent {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScoreEntry {
-    /// Always Beginner, Intermediate, or Expert — Custom is never ranked.
     pub difficulty: Difficulty,
     pub time: Duration,
     pub achieved_at: DateTime<Utc>,
@@ -327,9 +308,6 @@ impl Leaderboard {
 pub enum Screen {
     MainMenu { selected: usize },
     NewGameMenu { selected: usize },
-    /// Custom game config entry. Three fields: width, height, mines.
-    /// `field` is which is selected (0/1/2), `input` is the current typed value.
-    CustomGame { field: usize, width: String, height: String, mines: String },
     Playing,
     GameOver { won: bool, selected: usize },
     /// Which difficulty tab is currently shown.
@@ -373,14 +351,26 @@ impl LeaderboardTab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiHover {
     Back,
-    Start,
     Tab(usize),
+}
+
+/// A group of deducible cells sharing the same inference, for hint display.
+#[derive(Clone, Debug)]
+pub struct HintState {
+    pub mine_targets: Vec<(u16, u16)>,
+    pub safe_targets: Vec<(u16, u16)>,
+    /// Revealed numbered cells whose constraints force the deduction.
+    pub witnesses: Vec<(u16, u16)>,
+    /// True when the global mine counter was needed (Tier 2).
+    pub uses_global: bool,
 }
 
 pub struct App {
     pub screen: Screen,
     pub game: Option<GameState>,
     pub leaderboard: Leaderboard,
+    /// Active hint, cleared on any board action or game start.
+    pub hint: Option<HintState>,
     /// The currently highlighted cell in board space.
     /// Updated by both keyboard navigation and mouse movement.
     /// Only rendered when `cell_active` is true.
@@ -407,6 +397,7 @@ impl App {
             screen: Screen::MainMenu { selected: 0 },
             game: None,
             leaderboard,
+            hint: None,
             active_cell: (0, 0),
             cell_active: false,
             mouse_controlling: true,

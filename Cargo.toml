@@ -1,6 +1,6 @@
 [package]
 name = "minesweepe-rs"
-version = "0.3.0"
+version = "0.4.1"
 edition = "2021"
 description = "rust minesweeper. minesweeper in rust."
 license = "MIT"
@@ -20,4 +20,8 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 anyhow = "1"
 rand = "0.8"
+rayon = "1"
 tachyonfx = { version = "0.25", features = ["std-duration"] }
+
+[profile.release]
+debug = true

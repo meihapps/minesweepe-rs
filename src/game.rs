@@ -1,6 +1,7 @@
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
+use crate::solver::{self, SolveResult};
 use crate::types::{
     Board, CellVisibility, GameConfig, GameState, GameStatus,
 };
@@ -9,45 +10,59 @@ use crate::types::{
 // Mine placement
 // ---------------------------------------------------------------------------
 
-/// Places mines on the board after the first click, guaranteeing a safe zone
-/// around the clicked cell. The safe zone is 3×3 if the config allows it
-/// (mine_count <= width*height - 10), otherwise just the clicked cell.
+/// Places mines on the board after the first click, guaranteeing:
+///   - A safe zone around the first click (3×3 when density allows, else 1×1).
+///   - The resulting puzzle is solvable without guessing.
+///
+/// Retries up to `MAX_ATTEMPTS` times; on the rare chance every attempt fails,
+/// falls back to the last layout (preserving playability over correctness).
 pub fn place_mines(board: &mut Board, config: &GameConfig, first_click: (u16, u16)) {
+    const MAX_ATTEMPTS: usize = 100;
+
     let (fx, fy) = first_click;
     let total = (config.width * config.height) as usize;
 
-    // Build the set of excluded indices.
-    let excluded: std::collections::HashSet<usize> = if config.allows_3x3_safe_zone() {
-        (-1i32..=1)
-            .flat_map(|dy| (-1i32..=1).map(move |dx| (dx, dy)))
-            .filter_map(|(dx, dy)| {
-                let nx = fx as i32 + dx;
-                let ny = fy as i32 + dy;
-                if board.in_bounds(nx, ny) {
-                    Some(board.idx(nx as u16, ny as u16))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    } else {
-        std::iter::once(board.idx(fx, fy)).collect()
-    };
+    let excluded: std::collections::HashSet<usize> = (-1i32..=1)
+        .flat_map(|dy| (-1i32..=1).map(move |dx| (dx, dy)))
+        .filter_map(|(dx, dy)| {
+            let nx = fx as i32 + dx;
+            let ny = fy as i32 + dy;
+            if board.in_bounds(nx, ny) {
+                Some(board.idx(nx as u16, ny as u16))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    // Collect all candidate indices.
     let mut candidates: Vec<usize> = (0..total).filter(|i| !excluded.contains(i)).collect();
-    candidates.shuffle(&mut thread_rng());
+    let mut rng = thread_rng();
 
-    // Place mines.
-    for &idx in candidates.iter().take(config.mine_count as usize) {
-        board.cells[idx].is_mine = true;
+    for attempt in 0..MAX_ATTEMPTS {
+        // Clear previous layout.
+        for cell in board.cells.iter_mut() {
+            cell.is_mine = false;
+            cell.adjacent_mines = 0;
+        }
+
+        candidates.shuffle(&mut rng);
+        for &idx in candidates.iter().take(config.mine_count as usize) {
+            board.cells[idx].is_mine = true;
+        }
+        compute_adjacency(board);
+
+        if solver::solve(board, first_click) == SolveResult::Solved {
+            return;
+        }
+
+        // Last attempt: keep whatever we have rather than leaving an empty board.
+        if attempt == MAX_ATTEMPTS - 1 {
+            return;
+        }
     }
-
-    // Compute adjacent_mines for every cell.
-    compute_adjacency(board);
 }
 
-fn compute_adjacency(board: &mut Board) {
+pub(crate) fn compute_adjacency(board: &mut Board) {
     for y in 0..board.height {
         for x in 0..board.width {
             if board.get(x, y).is_mine {
