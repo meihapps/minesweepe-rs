@@ -2,6 +2,11 @@
 
 rust minesweeper. minesweeper in rust.
 
+- every board is guaranteed solvable without guessing — a solvable layout is pre-generated in the background as you hover before your first click
+- built-in hint system (`?`) highlights cells deducible from the current board state
+- leaderboard tracking for beginner, intermediate, and expert
+- mouse and keyboard support
+
 ![demo](demo.gif)
 
 ## install
@@ -32,5 +37,3 @@ times are recorded for beginner, intermediate, and expert. games where hints wer
 ## hints
 
 press `?` during a game to request a hint. the solver will highlight cells that can be deduced safe or as mines from the current board state. using a hint disqualifies the run from the leaderboard.
-
-boards are guaranteed to be solvable without guessing — a solvable layout is pre-generated in the background as you hover before your first click.

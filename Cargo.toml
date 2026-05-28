@@ -1,12 +1,12 @@
 [package]
 name = "minesweepe-rs"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
-description = "rust minesweeper. minesweeper in rust."
+description = "terminal minesweeper with a hint system and guaranteed solvable boards"
 license = "MIT"
 repository = "https://github.com/meihapps/minesweepe-rs"
 readme = "README.md"
-keywords = ["minesweeper", "tui", "game", "terminal"]
+keywords = ["minesweeper", "tui", "ratatui", "terminal", "no-guess"]
 categories = ["games", "command-line-utilities"]
 
 [dependencies]
