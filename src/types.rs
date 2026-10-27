@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
+use ratatui::layout::Rect;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use ratatui::layout::Rect;
 use tachyonfx::Effect;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Render constants
@@ -23,7 +23,7 @@ pub const BORDER_ROW: u16 = 1;
 /// Width  = width  * (CELL_WIDTH  + BORDER_COL) + BORDER_COL
 /// Height = height * (CELL_HEIGHT + BORDER_ROW) + BORDER_ROW
 pub fn board_render_size(config: &GameConfig) -> (u16, u16) {
-    let w = config.width  * (CELL_WIDTH  + BORDER_COL) + BORDER_COL;
+    let w = config.width * (CELL_WIDTH + BORDER_COL) + BORDER_COL;
     let h = config.height * (CELL_HEIGHT + BORDER_ROW) + BORDER_ROW;
     (w, h)
 }
@@ -52,8 +52,8 @@ impl CellVisibility {
     /// Has no effect on already-revealed cells.
     pub fn cycle_flag(self) -> Self {
         match self {
-            CellVisibility::Hidden   => CellVisibility::Flagged,
-            CellVisibility::Flagged  => CellVisibility::Question,
+            CellVisibility::Hidden => CellVisibility::Flagged,
+            CellVisibility::Flagged => CellVisibility::Question,
             CellVisibility::Question => CellVisibility::Hidden,
             CellVisibility::Revealed => CellVisibility::Revealed,
         }
@@ -133,7 +133,9 @@ impl Board {
         let mut result = Vec::with_capacity(8);
         for dy in -1..=1i32 {
             for dx in -1..=1i32 {
-                if dx == 0 && dy == 0 { continue; }
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
                 let (nx, ny) = (cx + dx, cy + dy);
                 if nx >= 0 && ny >= 0 && nx < w && ny < h {
                     result.push((nx as u16, ny as u16));
@@ -158,17 +160,29 @@ pub enum Difficulty {
 impl Difficulty {
     pub fn config(self) -> GameConfig {
         match self {
-            Difficulty::Beginner     => GameConfig { width: 9,  height: 9,  mine_count: 10 },
-            Difficulty::Intermediate => GameConfig { width: 16, height: 16, mine_count: 40 },
-            Difficulty::Expert       => GameConfig { width: 30, height: 16, mine_count: 99 },
+            Difficulty::Beginner => GameConfig {
+                width: 9,
+                height: 9,
+                mine_count: 10,
+            },
+            Difficulty::Intermediate => GameConfig {
+                width: 16,
+                height: 16,
+                mine_count: 40,
+            },
+            Difficulty::Expert => GameConfig {
+                width: 30,
+                height: 16,
+                mine_count: 99,
+            },
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Difficulty::Beginner     => "Beginner",
+            Difficulty::Beginner => "Beginner",
             Difficulty::Intermediate => "Intermediate",
-            Difficulty::Expert       => "Expert",
+            Difficulty::Expert => "Expert",
         }
     }
 }
@@ -179,7 +193,6 @@ pub struct GameConfig {
     pub height: u16,
     pub mine_count: u16,
 }
-
 
 // ---------------------------------------------------------------------------
 // Game status
@@ -192,7 +205,9 @@ pub enum GameStatus {
     Playing,
     Won,
     /// Carries the coordinate of the cell that detonated, for highlighting.
-    Lost { detonated: (u16, u16) },
+    Lost {
+        detonated: (u16, u16),
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +311,10 @@ impl Leaderboard {
     pub const MAX_ENTRIES: usize = 10;
 
     pub fn get(&self, difficulty: Difficulty) -> &[ScoreEntry] {
-        self.entries.get(&difficulty).map(|v| v.as_slice()).unwrap_or(&[])
+        self.entries
+            .get(&difficulty)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -306,12 +324,21 @@ impl Leaderboard {
 
 #[derive(Clone, Debug)]
 pub enum Screen {
-    MainMenu { selected: usize },
-    NewGameMenu { selected: usize },
+    MainMenu {
+        selected: usize,
+    },
+    NewGameMenu {
+        selected: usize,
+    },
     Playing,
-    GameOver { won: bool, selected: usize },
+    GameOver {
+        won: bool,
+        selected: usize,
+    },
     /// Which difficulty tab is currently shown.
-    Leaderboard { tab: LeaderboardTab },
+    Leaderboard {
+        tab: LeaderboardTab,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,25 +351,25 @@ pub enum LeaderboardTab {
 impl LeaderboardTab {
     pub fn difficulty(self) -> Difficulty {
         match self {
-            LeaderboardTab::Beginner     => Difficulty::Beginner,
+            LeaderboardTab::Beginner => Difficulty::Beginner,
             LeaderboardTab::Intermediate => Difficulty::Intermediate,
-            LeaderboardTab::Expert       => Difficulty::Expert,
+            LeaderboardTab::Expert => Difficulty::Expert,
         }
     }
 
     pub fn next(self) -> Self {
         match self {
-            LeaderboardTab::Beginner     => LeaderboardTab::Intermediate,
+            LeaderboardTab::Beginner => LeaderboardTab::Intermediate,
             LeaderboardTab::Intermediate => LeaderboardTab::Expert,
-            LeaderboardTab::Expert       => LeaderboardTab::Beginner,
+            LeaderboardTab::Expert => LeaderboardTab::Beginner,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            LeaderboardTab::Beginner     => LeaderboardTab::Expert,
+            LeaderboardTab::Beginner => LeaderboardTab::Expert,
             LeaderboardTab::Intermediate => LeaderboardTab::Beginner,
-            LeaderboardTab::Expert       => LeaderboardTab::Intermediate,
+            LeaderboardTab::Expert => LeaderboardTab::Intermediate,
         }
     }
 }

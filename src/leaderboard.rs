@@ -1,5 +1,5 @@
-use std::time::Duration;
 use chrono::Utc;
+use std::time::Duration;
 
 use crate::types::{Difficulty, Leaderboard, ScoreEntry};
 
@@ -80,5 +80,5 @@ pub fn submit(leaderboard: &mut Leaderboard, difficulty: Difficulty, time: Durat
 /// Returns whether a given time would qualify for the leaderboard.
 pub fn qualifies(leaderboard: &Leaderboard, difficulty: Difficulty, time: Duration) -> bool {
     let entries = leaderboard.get(difficulty);
-    entries.len() < Leaderboard::MAX_ENTRIES || entries.last().map_or(true, |e| time < e.time)
+    entries.len() < Leaderboard::MAX_ENTRIES || entries.last().is_none_or(|e| time < e.time)
 }

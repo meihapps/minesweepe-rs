@@ -1,6 +1,6 @@
-use std::collections::{HashMap, VecDeque};
-use rayon::prelude::*;
 use crate::types::Board;
+use rayon::prelude::*;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(PartialEq, Eq)]
 pub enum SolveResult {
@@ -19,7 +19,9 @@ pub struct Deduction {
 }
 
 impl Deduction {
-    fn total_cells(&self) -> usize { self.mine_cells.len() + self.safe_cells.len() }
+    fn total_cells(&self) -> usize {
+        self.mine_cells.len() + self.safe_cells.len()
+    }
     /// Fewest witnesses → most cells → more mines (tiebreaker).
     fn beats(&self, other: &Deduction) -> bool {
         if self.witnesses.len() != other.witnesses.len() {
@@ -35,9 +37,9 @@ impl Deduction {
 // ── Internal types ──────────────────────────────────────────────────────────
 
 struct Constraint {
-    witness: usize,       // board index of the revealed numbered cell
-    cells: Vec<usize>,    // frontier (unrevealed, unflagged) neighbour indices
-    count: usize,         // remaining mines in `cells`
+    witness: usize,    // board index of the revealed numbered cell
+    cells: Vec<usize>, // frontier (unrevealed, unflagged) neighbour indices
+    count: usize,      // remaining mines in `cells`
 }
 
 struct ComponentAnalysis {
@@ -52,14 +54,18 @@ fn flood_fill(board: &Board, start: usize, revealed: &mut [bool]) {
     let mut q = VecDeque::new();
     q.push_back(start);
     while let Some(idx) = q.pop_front() {
-        if revealed[idx] || board.cells[idx].is_mine { continue; }
+        if revealed[idx] || board.cells[idx].is_mine {
+            continue;
+        }
         revealed[idx] = true;
         if board.cells[idx].adjacent_mines == 0 {
             let x = (idx as u16) % board.width;
             let y = (idx as u16) / board.width;
             for (nx, ny) in board.neighbours(x, y) {
                 let ni = board.idx(nx, ny);
-                if !revealed[ni] { q.push_back(ni); }
+                if !revealed[ni] {
+                    q.push_back(ni);
+                }
             }
         }
     }
@@ -70,9 +76,13 @@ fn build_constraints(board: &Board, revealed: &[bool], flagged: &[bool]) -> Vec<
     for y in 0..board.height {
         for x in 0..board.width {
             let idx = board.idx(x, y);
-            if !revealed[idx] { continue; }
+            if !revealed[idx] {
+                continue;
+            }
             let adj = board.cells[idx].adjacent_mines as usize;
-            if adj == 0 { continue; }
+            if adj == 0 {
+                continue;
+            }
 
             let mut cells = Vec::new();
             let mut known_mines = 0usize;
@@ -84,10 +94,16 @@ fn build_constraints(board: &Board, revealed: &[bool], flagged: &[bool]) -> Vec<
                     cells.push(ni);
                 }
             }
-            if known_mines > adj { continue; }
+            if known_mines > adj {
+                continue;
+            }
             let count = adj - known_mines;
             if !cells.is_empty() {
-                result.push(Constraint { witness: idx, cells, count });
+                result.push(Constraint {
+                    witness: idx,
+                    cells,
+                    count,
+                });
             }
         }
     }
@@ -95,7 +111,9 @@ fn build_constraints(board: &Board, revealed: &[bool], flagged: &[bool]) -> Vec<
 }
 
 fn analyse_components(constraints: &[Constraint]) -> Vec<ComponentAnalysis> {
-    if constraints.is_empty() { return vec![]; }
+    if constraints.is_empty() {
+        return vec![];
+    }
 
     // Map each frontier cell to the constraints that contain it.
     let mut cell_to_constraints: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -111,7 +129,9 @@ fn analyse_components(constraints: &[Constraint]) -> Vec<ComponentAnalysis> {
     let mut component_groups: Vec<Vec<usize>> = Vec::new();
 
     for start in 0..n {
-        if visited[start] { continue; }
+        if visited[start] {
+            continue;
+        }
         let mut group = Vec::new();
         let mut q = VecDeque::new();
         q.push_back(start);
@@ -133,31 +153,47 @@ fn analyse_components(constraints: &[Constraint]) -> Vec<ComponentAnalysis> {
     }
 
     // Enumerate valid mine assignments for each component.
-    component_groups.iter().map(|group| {
-        let mut frontier: Vec<usize> = group.iter()
-            .flat_map(|&ci| constraints[ci].cells.iter().copied())
-            .collect();
-        frontier.sort_unstable();
-        frontier.dedup();
+    component_groups
+        .iter()
+        .map(|group| {
+            let mut frontier: Vec<usize> = group
+                .iter()
+                .flat_map(|&ci| constraints[ci].cells.iter().copied())
+                .collect();
+            frontier.sort_unstable();
+            frontier.dedup();
 
-        let cell_to_local: HashMap<usize, usize> = frontier.iter().enumerate()
-            .map(|(i, &c)| (c, i))
-            .collect();
+            let cell_to_local: HashMap<usize, usize> =
+                frontier.iter().enumerate().map(|(i, &c)| (c, i)).collect();
 
-        let local_constraints: Vec<(Vec<usize>, usize)> = group.iter()
-            .map(|&ci| {
-                let c = &constraints[ci];
-                let local: Vec<usize> = c.cells.iter().map(|&f| cell_to_local[&f]).collect();
-                (local, c.count)
-            })
-            .collect();
+            let local_constraints: Vec<(Vec<usize>, usize)> = group
+                .iter()
+                .map(|&ci| {
+                    let c = &constraints[ci];
+                    let local: Vec<usize> = c.cells.iter().map(|&f| cell_to_local[&f]).collect();
+                    (local, c.count)
+                })
+                .collect();
 
-        let mut configs: Vec<(Vec<bool>, usize)> = Vec::new();
-        let mut assignment = vec![false; frontier.len()];
-        backtrack(&local_constraints, &mut assignment, 0, 0, 0, usize::MAX, &mut configs);
+            let mut configs: Vec<(Vec<bool>, usize)> = Vec::new();
+            let mut assignment = vec![false; frontier.len()];
+            backtrack(
+                &local_constraints,
+                &mut assignment,
+                0,
+                0,
+                0,
+                usize::MAX,
+                &mut configs,
+            );
 
-        ComponentAnalysis { frontier, configs, constraint_indices: group.clone() }
-    }).collect()
+            ComponentAnalysis {
+                frontier,
+                configs,
+                constraint_indices: group.clone(),
+            }
+        })
+        .collect()
 }
 
 /// `k_min`/`k_max` act as a global mine-count constraint over the whole assignment:
@@ -172,16 +208,28 @@ fn backtrack(
     valid: &mut Vec<(Vec<bool>, usize)>,
 ) {
     // Prune on total mine count (global constraint).
-    if mines_so_far > k_max { return; }
-    if mines_so_far + (assignment.len() - pos) < k_min { return; }
+    if mines_so_far > k_max {
+        return;
+    }
+    if mines_so_far + (assignment.len() - pos) < k_min {
+        return;
+    }
 
     // Prune on local constraints.
     for (cells, count) in constraints {
         let (mines, unknowns) = cells.iter().fold((0usize, 0usize), |(m, u), &li| {
-            if li < pos { (m + assignment[li] as usize, u) } else { (m, u + 1) }
+            if li < pos {
+                (m + assignment[li] as usize, u)
+            } else {
+                (m, u + 1)
+            }
         });
-        if mines > *count { return; }
-        if mines + unknowns < *count { return; }
+        if mines > *count {
+            return;
+        }
+        if mines + unknowns < *count {
+            return;
+        }
     }
 
     if pos == assignment.len() {
@@ -193,8 +241,15 @@ fn backtrack(
 
     for &mine in &[false, true] {
         assignment[pos] = mine;
-        backtrack(constraints, assignment, pos + 1,
-                  mines_so_far + mine as usize, k_min, k_max, valid);
+        backtrack(
+            constraints,
+            assignment,
+            pos + 1,
+            mines_so_far + mine as usize,
+            k_min,
+            k_max,
+            valid,
+        );
     }
 }
 
@@ -211,10 +266,13 @@ fn make_local_constraints(
     frontier: &[usize],
     constraints: &[Constraint],
 ) -> Vec<(Vec<usize>, usize)> {
-    included.iter()
+    included
+        .iter()
         .map(|&ci| {
             let c = &constraints[ci];
-            let local: Vec<usize> = c.cells.iter()
+            let local: Vec<usize> = c
+                .cells
+                .iter()
                 .filter_map(|&cell| frontier.binary_search(&cell).ok())
                 .collect();
             (local, c.count)
@@ -230,7 +288,8 @@ fn eval_combo(
     constraints: &[Constraint],
     board: &Board,
 ) -> Option<Deduction> {
-    let mut frontier: Vec<usize> = included.iter()
+    let mut frontier: Vec<usize> = included
+        .iter()
         .flat_map(|&ci| constraints[ci].cells.iter().copied())
         .collect();
     frontier.sort_unstable();
@@ -238,35 +297,59 @@ fn eval_combo(
 
     let lc = make_local_constraints(included, &frontier, constraints);
     let mut configs = Vec::new();
-    backtrack(&lc, &mut vec![false; frontier.len()], 0, 0, 0, usize::MAX, &mut configs);
-    if configs.is_empty() { return None; }
+    backtrack(
+        &lc,
+        &mut vec![false; frontier.len()],
+        0,
+        0,
+        0,
+        usize::MAX,
+        &mut configs,
+    );
+    if configs.is_empty() {
+        return None;
+    }
 
     let mut mine_cells: Vec<(u16, u16)> = Vec::new();
     let mut safe_cells: Vec<(u16, u16)> = Vec::new();
 
     for &(bi, is_mine) in forced {
         if let Ok(tl) = frontier.binary_search(&bi) {
-            let is_forced = if is_mine { configs.iter().all(|(cfg, _)| cfg[tl]) }
-                            else       { configs.iter().all(|(cfg, _)| !cfg[tl]) };
+            let is_forced = if is_mine {
+                configs.iter().all(|(cfg, _)| cfg[tl])
+            } else {
+                configs.iter().all(|(cfg, _)| !cfg[tl])
+            };
             if is_forced {
                 let x = (bi as u16) % board.width;
                 let y = (bi as u16) / board.width;
-                if is_mine { mine_cells.push((x, y)); }
-                else       { safe_cells.push((x, y)); }
+                if is_mine {
+                    mine_cells.push((x, y));
+                } else {
+                    safe_cells.push((x, y));
+                }
             }
         }
     }
 
-    if mine_cells.is_empty() && safe_cells.is_empty() { return None; }
+    if mine_cells.is_empty() && safe_cells.is_empty() {
+        return None;
+    }
 
-    let witnesses: Vec<(u16, u16)> = included.iter()
+    let witnesses: Vec<(u16, u16)> = included
+        .iter()
         .map(|&ci| {
             let wi = constraints[ci].witness;
             ((wi as u16) % board.width, (wi as u16) / board.width)
         })
         .collect();
 
-    Some(Deduction { mine_cells, safe_cells, witnesses, uses_global: false })
+    Some(Deduction {
+        mine_cells,
+        safe_cells,
+        witnesses,
+        uses_global: false,
+    })
 }
 
 /// Returns true if constraints `a` and `b` share any frontier cell.
@@ -279,7 +362,9 @@ fn constraints_overlap(a: &Constraint, b: &Constraint) -> bool {
 /// upper-bound prune on the suffix sum of sorted cell counts.
 fn max_nonoverlapping_coverage(constraints: &[Constraint]) -> Vec<usize> {
     let n = constraints.len();
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
 
     // Process in descending cell-count order for tighter pruning.
     let mut order: Vec<usize> = (0..n).collect();
@@ -291,57 +376,75 @@ fn max_nonoverlapping_coverage(constraints: &[Constraint]) -> Vec<usize> {
         suffix[i] = suffix[i + 1] + constraints[order[i]].cells.len();
     }
 
-    let mut best = 0usize;
-    let mut best_set: Vec<usize> = Vec::new();
-    let mut current: Vec<usize> = Vec::new();
-
-    nonoverlap_bt(0, &order, &mut current, 0, constraints, &suffix, &mut best, &mut best_set);
-    best_set
+    let mut search = NonoverlapSearch {
+        order: &order,
+        constraints,
+        suffix: &suffix,
+        current: Vec::new(),
+        best: 0,
+        best_set: Vec::new(),
+    };
+    search.backtrack(0, 0);
+    search.best_set
 }
 
-fn nonoverlap_bt(
-    pos: usize,
-    order: &[usize],
-    current: &mut Vec<usize>,
-    coverage: usize,
-    constraints: &[Constraint],
-    suffix: &[usize],
-    best: &mut usize,
-    best_set: &mut Vec<usize>,
-) {
-    if coverage > *best {
-        *best = coverage;
-        *best_set = current.clone();
-    }
-    // Even adding every remaining constraint can't beat current best — prune.
-    if coverage + suffix[pos] <= *best { return; }
+/// Backtracking state for `max_nonoverlapping_coverage`.
+struct NonoverlapSearch<'a> {
+    order: &'a [usize],
+    constraints: &'a [Constraint],
+    suffix: &'a [usize],
+    current: Vec<usize>,
+    best: usize,
+    best_set: Vec<usize>,
+}
 
-    for i in pos..order.len() {
-        let ci = order[i];
-        if current.iter().any(|&cj| constraints_overlap(&constraints[ci], &constraints[cj])) {
-            continue;
+impl NonoverlapSearch<'_> {
+    fn backtrack(&mut self, pos: usize, coverage: usize) {
+        if coverage > self.best {
+            self.best = coverage;
+            self.best_set = self.current.clone();
         }
-        current.push(ci);
-        nonoverlap_bt(i + 1, order, current, coverage + constraints[ci].cells.len(),
-                      constraints, suffix, best, best_set);
-        current.pop();
+        // Even adding every remaining constraint can't beat current best — prune.
+        if coverage + self.suffix[pos] <= self.best {
+            return;
+        }
+
+        for i in pos..self.order.len() {
+            let ci = self.order[i];
+            if self
+                .current
+                .iter()
+                .any(|&cj| constraints_overlap(&self.constraints[ci], &self.constraints[cj]))
+            {
+                continue;
+            }
+            self.current.push(ci);
+            self.backtrack(i + 1, coverage + self.constraints[ci].cells.len());
+            self.current.pop();
+        }
     }
 }
 
 /// Generates all k-combinations of indices 0..n.
 fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
-    if k == 0 || k > n { return vec![]; }
+    if k == 0 || k > n {
+        return vec![];
+    }
     let mut result = Vec::new();
     let mut combo: Vec<usize> = (0..k).collect();
     loop {
         result.push(combo.clone());
         let mut i = k;
         loop {
-            if i == 0 { return result; }
+            if i == 0 {
+                return result;
+            }
             i -= 1;
             if combo[i] < n - (k - i) {
                 combo[i] += 1;
-                for j in (i + 1)..k { combo[j] = combo[j - 1] + 1; }
+                for j in (i + 1)..k {
+                    combo[j] = combo[j - 1] + 1;
+                }
                 break;
             }
         }
@@ -376,22 +479,28 @@ fn min_witness_subset(
         let parallel = combos.len() >= PAR_THRESHOLD;
         if first_only {
             let found = if parallel {
-                combos.par_iter().find_map_any(|c| eval(c))
+                combos.par_iter().find_map_any(eval)
             } else {
-                combos.iter().find_map(|c| eval(c))
+                combos.iter().find_map(&eval)
             };
-            if found.is_some() { return found; }
+            if found.is_some() {
+                return found;
+            }
         } else {
             let best = if parallel {
-                combos.par_iter()
-                    .filter_map(|c| eval(c))
+                combos
+                    .par_iter()
+                    .filter_map(&eval)
                     .reduce_with(|a, b| if a.beats(&b) { a } else { b })
             } else {
-                combos.iter()
-                    .filter_map(|c| eval(c))
+                combos
+                    .iter()
+                    .filter_map(&eval)
                     .reduce(|a, b| if a.beats(&b) { a } else { b })
             };
-            if best.is_some() { return best; }
+            if best.is_some() {
+                return best;
+            }
         }
     }
 
@@ -407,14 +516,24 @@ pub fn solve(board: &Board, first_click: (u16, u16)) -> SolveResult {
     let mut flagged = vec![false; n];
     let mut flags_placed: u16 = 0;
 
-    flood_fill(board, board.idx(first_click.0, first_click.1), &mut revealed);
+    flood_fill(
+        board,
+        board.idx(first_click.0, first_click.1),
+        &mut revealed,
+    );
 
     loop {
-        if board.cells.iter().enumerate().all(|(i, c)| c.is_mine || revealed[i]) {
+        if board
+            .cells
+            .iter()
+            .enumerate()
+            .all(|(i, c)| c.is_mine || revealed[i])
+        {
             return SolveResult::Solved;
         }
 
-        let Some(d) = hint_inner(board, &revealed, &flagged, flags_placed, total_mines, true) else {
+        let Some(d) = hint_inner(board, &revealed, &flagged, flags_placed, total_mines, true)
+        else {
             return SolveResult::Unsolvable;
         };
         debug_check_deduction(board, &flagged, &d);
@@ -448,14 +567,28 @@ pub fn hint(
 /// safe cell is safe. Skipped when any flag is wrong, since the solver trusts
 /// flags and a player's misflag can legitimately lead to a wrong deduction.
 fn debug_check_deduction(board: &Board, flagged: &[bool], d: &Deduction) {
-    if !cfg!(debug_assertions) { return; }
-    if flagged.iter().zip(&board.cells).any(|(&f, c)| f && !c.is_mine) { return; }
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    if flagged
+        .iter()
+        .zip(&board.cells)
+        .any(|(&f, c)| f && !c.is_mine)
+    {
+        return;
+    }
 
     for &(x, y) in &d.mine_cells {
-        assert!(board.get(x, y).is_mine, "solver deduced ({x}, {y}) is a mine, but it is safe");
+        assert!(
+            board.get(x, y).is_mine,
+            "solver deduced ({x}, {y}) is a mine, but it is safe"
+        );
     }
     for &(x, y) in &d.safe_cells {
-        assert!(!board.get(x, y).is_mine, "solver deduced ({x}, {y}) is safe, but it is a mine");
+        assert!(
+            !board.get(x, y).is_mine,
+            "solver deduced ({x}, {y}) is safe, but it is a mine"
+        );
     }
 }
 
@@ -481,24 +614,44 @@ fn hint_inner(
         for c in &constraints {
             let all_mine = c.count > 0 && c.count == c.cells.len();
             let all_safe = c.count == 0;
-            if !all_mine && !all_safe { continue; }
+            if !all_mine && !all_safe {
+                continue;
+            }
             let wx = (c.witness as u16) % board.width;
             let wy = (c.witness as u16) / board.width;
             let mut mine_cells = Vec::new();
             let mut safe_cells = Vec::new();
             for &bi in &c.cells {
-                if revealed[bi] || flagged[bi] { continue; }
+                if revealed[bi] || flagged[bi] {
+                    continue;
+                }
                 let x = (bi as u16) % board.width;
                 let y = (bi as u16) / board.width;
-                if all_mine { mine_cells.push((x, y)); }
-                else        { safe_cells.push((x, y)); }
+                if all_mine {
+                    mine_cells.push((x, y));
+                } else {
+                    safe_cells.push((x, y));
+                }
             }
-            if mine_cells.is_empty() && safe_cells.is_empty() { continue; }
-            let d = Deduction { mine_cells, safe_cells, witnesses: vec![(wx, wy)], uses_global: false };
-            if first_only { return Some(d); }
-            if best.as_ref().map_or(true, |b| d.beats(b)) { best = Some(d); }
+            if mine_cells.is_empty() && safe_cells.is_empty() {
+                continue;
+            }
+            let d = Deduction {
+                mine_cells,
+                safe_cells,
+                witnesses: vec![(wx, wy)],
+                uses_global: false,
+            };
+            if first_only {
+                return Some(d);
+            }
+            if best.as_ref().is_none_or(|b| d.beats(b)) {
+                best = Some(d);
+            }
         }
-        if best.is_some() { return best; }
+        if best.is_some() {
+            return best;
+        }
     }
 
     // ── Shared setup for Phases 2 & 3 ────────────────────────────────────
@@ -506,9 +659,7 @@ fn hint_inner(
     let n = board.cells.len();
     let remaining = (total_mines as usize).saturating_sub(flags_placed as usize);
 
-    let all_unrevealed: Vec<usize> = (0..n)
-        .filter(|&i| !revealed[i] && !flagged[i])
-        .collect();
+    let all_unrevealed: Vec<usize> = (0..n).filter(|&i| !revealed[i] && !flagged[i]).collect();
 
     // ── Phase 2 ───────────────────────────────────────────────────────────
     // Up to 3 local witnesses per component; strictly local, no global count.
@@ -516,24 +667,40 @@ fn hint_inner(
         const MAX_WITNESSES: usize = 3;
         let mut best: Option<Deduction> = None;
         for ca in &components {
-            if ca.configs.is_empty() { continue; }
+            if ca.configs.is_empty() {
+                continue;
+            }
 
-            let candidates: Vec<(usize, bool)> = ca.frontier.iter()
+            let candidates: Vec<(usize, bool)> = ca
+                .frontier
+                .iter()
                 .filter(|&&bi| !revealed[bi] && !flagged[bi])
                 .flat_map(|&bi| [(bi, true), (bi, false)])
                 .collect();
-            if candidates.is_empty() { continue; }
+            if candidates.is_empty() {
+                continue;
+            }
 
             let comp_best = min_witness_subset(
-                &ca.constraint_indices, &candidates, &constraints, board,
-                MAX_WITNESSES, first_only,
+                &ca.constraint_indices,
+                &candidates,
+                &constraints,
+                board,
+                MAX_WITNESSES,
+                first_only,
             );
             if let Some(d) = comp_best {
-                if first_only { return Some(d); }
-                if best.as_ref().map_or(true, |b| d.beats(b)) { best = Some(d); }
+                if first_only {
+                    return Some(d);
+                }
+                if best.as_ref().is_none_or(|b| d.beats(b)) {
+                    best = Some(d);
+                }
             }
         }
-        if best.is_some() { return best; }
+        if best.is_some() {
+            return best;
+        }
     }
 
     // ── Phase 3 ───────────────────────────────────────────────────────────
@@ -545,30 +712,38 @@ fn hint_inner(
         let selected = max_nonoverlapping_coverage(&constraints);
 
         let covered_mines: usize = selected.iter().map(|&ci| constraints[ci].count).sum();
-        if remaining < covered_mines { return None; }
+        if remaining < covered_mines {
+            return None;
+        }
 
-        let mut covered: Vec<usize> = selected.iter()
+        let mut covered: Vec<usize> = selected
+            .iter()
             .flat_map(|&ci| constraints[ci].cells.iter().copied())
             .collect();
         covered.sort_unstable();
         covered.dedup();
 
-        let passive: Vec<usize> = all_unrevealed.iter()
+        let passive: Vec<usize> = all_unrevealed
+            .iter()
             .filter(|&&c| covered.binary_search(&c).is_err())
             .copied()
             .collect();
 
-        if passive.is_empty() { return None; }
+        if passive.is_empty() {
+            return None;
+        }
 
         let passive_mines = remaining - covered_mines;
 
         let (mine_cells, safe_cells) = if passive_mines == 0 {
-            let safe = passive.iter()
+            let safe = passive
+                .iter()
                 .map(|&bi| ((bi as u16) % board.width, (bi as u16) / board.width))
                 .collect();
             (vec![], safe)
         } else if passive_mines == passive.len() {
-            let mines = passive.iter()
+            let mines = passive
+                .iter()
                 .map(|&bi| ((bi as u16) % board.width, (bi as u16) / board.width))
                 .collect();
             (mines, vec![])
@@ -576,14 +751,20 @@ fn hint_inner(
             return None;
         };
 
-        let witnesses: Vec<(u16, u16)> = selected.iter()
+        let witnesses: Vec<(u16, u16)> = selected
+            .iter()
             .map(|&ci| {
                 let wi = constraints[ci].witness;
                 ((wi as u16) % board.width, (wi as u16) / board.width)
             })
             .collect();
 
-        Some(Deduction { mine_cells, safe_cells, witnesses, uses_global: true })
+        Some(Deduction {
+            mine_cells,
+            safe_cells,
+            witnesses,
+            uses_global: true,
+        })
     }
 }
 
@@ -610,12 +791,19 @@ mod tests {
 
     #[test]
     fn all_generated_boards_are_solvable() {
-        for difficulty in [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert] {
+        for difficulty in [
+            Difficulty::Beginner,
+            Difficulty::Intermediate,
+            Difficulty::Expert,
+        ] {
             let (solved, elapsed) = run_n_games(difficulty, 50);
             let label = difficulty.label();
             let per_game = elapsed / 50;
             println!("{label}: {solved}/50 solvable, {elapsed:?} total ({per_game:?}/game)");
-            assert_eq!(solved, 50, "{label}: not all generated boards were solvable");
+            assert_eq!(
+                solved, 50,
+                "{label}: not all generated boards were solvable"
+            );
         }
     }
 
@@ -631,24 +819,43 @@ mod tests {
         use rand::Rng;
 
         const BOARDS: usize = 10_000;
-        let difficulties = [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert];
+        let difficulties = [
+            Difficulty::Beginner,
+            Difficulty::Intermediate,
+            Difficulty::Expert,
+        ];
 
         (0..BOARDS).into_par_iter().for_each(|i| {
             let difficulty = difficulties[i % difficulties.len()];
             let config = difficulty.config();
             let mut rng = rand::thread_rng();
-            let first_click = (rng.gen_range(0..config.width), rng.gen_range(0..config.height));
+            let first_click = (
+                rng.gen_range(0..config.width),
+                rng.gen_range(0..config.height),
+            );
 
             let mut board = Board::new(config.width, config.height);
             place_mines(&mut board, &config, first_click);
 
-            let mines: Vec<usize> = (0..board.cells.len()).filter(|&i| board.cells[i].is_mine).collect();
-            let ctx = format!("{} board, first click {first_click:?}, mines at {mines:?}", difficulty.label());
+            let mines: Vec<usize> = (0..board.cells.len())
+                .filter(|&i| board.cells[i].is_mine)
+                .collect();
+            let ctx = format!(
+                "{} board, first click {first_click:?}, mines at {mines:?}",
+                difficulty.label()
+            );
 
-            assert_eq!(mines.len(), config.mine_count as usize, "wrong mine count: {ctx}");
+            assert_eq!(
+                mines.len(),
+                config.mine_count as usize,
+                "wrong mine count: {ctx}"
+            );
             let (fx, fy) = first_click;
             assert!(
-                board.neighbours(fx, fy).chain([first_click]).all(|(x, y)| !board.get(x, y).is_mine),
+                board
+                    .neighbours(fx, fy)
+                    .chain([first_click])
+                    .all(|(x, y)| !board.get(x, y).is_mine),
                 "mine in the safe zone: {ctx}"
             );
 
@@ -658,13 +865,21 @@ mod tests {
             let mut flags_placed = 0u16;
             flood_fill(&board, board.idx(fx, fy), &mut revealed);
 
-            while !board.cells.iter().zip(&revealed).all(|(c, &r)| c.is_mine || r) {
+            while !board
+                .cells
+                .iter()
+                .zip(&revealed)
+                .all(|(c, &r)| c.is_mine || r)
+            {
                 let d = hint(&board, &revealed, &flagged, flags_placed, config.mine_count)
                     .unwrap_or_else(|| panic!("solver got stuck and would need to guess: {ctx}"));
 
                 let mut progressed = false;
                 for &(x, y) in &d.mine_cells {
-                    assert!(board.get(x, y).is_mine, "({x}, {y}) deduced mine but is safe: {ctx}");
+                    assert!(
+                        board.get(x, y).is_mine,
+                        "({x}, {y}) deduced mine but is safe: {ctx}"
+                    );
                     let idx = board.idx(x, y);
                     if !flagged[idx] {
                         flagged[idx] = true;
@@ -673,14 +888,20 @@ mod tests {
                     }
                 }
                 for &(x, y) in &d.safe_cells {
-                    assert!(!board.get(x, y).is_mine, "({x}, {y}) deduced safe but is a mine: {ctx}");
+                    assert!(
+                        !board.get(x, y).is_mine,
+                        "({x}, {y}) deduced safe but is a mine: {ctx}"
+                    );
                     let idx = board.idx(x, y);
                     if !revealed[idx] {
                         flood_fill(&board, idx, &mut revealed);
                         progressed = true;
                     }
                 }
-                assert!(progressed, "solver returned a deduction that changed nothing: {ctx}");
+                assert!(
+                    progressed,
+                    "solver returned a deduction that changed nothing: {ctx}"
+                );
             }
         });
     }

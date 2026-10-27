@@ -1,6 +1,6 @@
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-    MouseButton, MouseEventKind,
+    DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+    MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -15,8 +15,8 @@ use ratatui::Terminal;
 use std::io::{self, Stdout};
 
 use crate::types::{
-    App, CellVisibility, GameAction, GameEvent, GameStatus, HintState, LeaderboardTab, Screen, UiHover,
-    BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
+    App, CellVisibility, GameAction, GameEvent, GameStatus, HintState, LeaderboardTab, Screen,
+    UiHover, BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
 };
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,11 @@ pub fn init() -> io::Result<Tui> {
 
 pub fn restore(terminal: &mut Tui) -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -48,15 +52,33 @@ pub fn draw(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
         let area = frame.area();
         match &app.screen {
             Screen::MainMenu { selected } => draw_main_menu(frame, area, *selected),
-            Screen::NewGameMenu { selected } => draw_new_game_menu(frame, area, *selected, app.ui_hover),
+            Screen::NewGameMenu { selected } => {
+                draw_new_game_menu(frame, area, *selected, app.ui_hover)
+            }
             Screen::Playing => {
                 if let Some(game) = &app.game {
-                    draw_game(frame, area, game, app.active_cell, app.cell_active, None, app.hint.as_ref());
+                    draw_game(
+                        frame,
+                        area,
+                        game,
+                        app.active_cell,
+                        app.cell_active,
+                        None,
+                        app.hint.as_ref(),
+                    );
                 }
             }
             Screen::GameOver { won, selected } => {
                 if let Some(game) = &app.game {
-                    draw_game(frame, area, game, app.active_cell, app.cell_active, Some((*won, *selected)), None);
+                    draw_game(
+                        frame,
+                        area,
+                        game,
+                        app.active_cell,
+                        app.cell_active,
+                        Some((*won, *selected)),
+                        None,
+                    );
                 }
             }
             Screen::Leaderboard { tab } => {
@@ -81,14 +103,12 @@ pub fn draw(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
 
 pub const MAIN_MENU_ITEMS: &[&str] = &["New Game", "Leaderboard", "Quit"];
 
-fn draw_main_menu(
-    frame: &mut ratatui::Frame,
-    area: Rect,
-    selected: usize,
-) {
+fn draw_main_menu(frame: &mut ratatui::Frame, area: Rect, selected: usize) {
     let title = Line::from(Span::styled(
         "minesweepe-rs",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     ));
 
     let mut text: Vec<Line> = vec![title, Line::from("")];
@@ -96,7 +116,9 @@ fn draw_main_menu(
         if i == selected {
             text.push(Line::from(Span::styled(
                 format!(" ▶ {} ", item),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )));
         } else {
             text.push(Line::from(Span::styled(
@@ -112,7 +134,11 @@ fn draw_main_menu(
     )));
 
     let para = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" minesweepe-rs "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" minesweepe-rs "),
+        )
         .alignment(Alignment::Center);
 
     let popup = centered_rect(40, 50, area);
@@ -124,9 +150,9 @@ fn draw_main_menu(
 // ---------------------------------------------------------------------------
 
 pub const NEW_GAME_ITEMS: &[(&str, &str)] = &[
-    ("Beginner",     "9×9, 10 mines"),
+    ("Beginner", "9×9, 10 mines"),
     ("Intermediate", "16×16, 40 mines"),
-    ("Expert",       "30×16, 99 mines"),
+    ("Expert", "30×16, 99 mines"),
 ];
 
 fn draw_new_game_menu(
@@ -143,12 +169,11 @@ fn draw_new_game_menu(
                 Line::from(vec![
                     Span::styled(
                         format!(" ▶ {:<14}", name),
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("({})", desc),
-                        Style::default().fg(Color::Yellow),
-                    ),
+                    Span::styled(format!("({})", desc), Style::default().fg(Color::Yellow)),
                 ])
             } else {
                 Line::from(vec![
@@ -156,19 +181,20 @@ fn draw_new_game_menu(
                         format!("   {:<14}", name),
                         Style::default().fg(Color::White),
                     ),
-                    Span::styled(
-                        format!("({})", desc),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!("({})", desc), Style::default().fg(Color::DarkGray)),
                 ])
             }
         })
         .chain(std::iter::once(Line::from("")))
         .chain(std::iter::once({
             let back_style = if ui_hover == Some(UiHover::Back) {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
             };
             Line::from(vec![
                 Span::styled("  Enter: select    ", Style::default().fg(Color::DarkGray)),
@@ -184,7 +210,6 @@ fn draw_new_game_menu(
     let popup = centered_rect(50, 60, area);
     frame.render_widget(para, popup);
 }
-
 
 // ---------------------------------------------------------------------------
 // Game board
@@ -213,7 +238,9 @@ fn draw_game(
         let header_line = Line::from(vec![
             Span::styled(
                 format!("  {}  ", result_text),
-                Style::default().fg(result_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(result_color)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  "),
             Span::styled(time_str, Style::default().fg(Color::White)),
@@ -229,25 +256,38 @@ fn draw_game(
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(0),
+                Constraint::Length(3),
+            ])
             .split(area);
 
         frame.render_widget(header, chunks[0]);
-        draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config, None);
+        draw_board(frame, chunks[1], game, active_cell, cell_active, None);
 
-        let items: Vec<Span> = GAME_OVER_ITEMS.iter().enumerate().flat_map(|(i, item)| {
-            let style = if i == selected {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            let sep = if i > 0 {
-                vec![Span::styled("  |  ", Style::default().fg(Color::DarkGray))]
-            } else {
-                vec![]
-            };
-            sep.into_iter().chain(std::iter::once(Span::styled(format!("[ {} ]", item), style)))
-        }).collect();
+        let items: Vec<Span> = GAME_OVER_ITEMS
+            .iter()
+            .enumerate()
+            .flat_map(|(i, item)| {
+                let style = if i == selected {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let sep = if i > 0 {
+                    vec![Span::styled("  |  ", Style::default().fg(Color::DarkGray))]
+                } else {
+                    vec![]
+                };
+                sep.into_iter().chain(std::iter::once(Span::styled(
+                    format!("[ {} ]", item),
+                    style,
+                )))
+            })
+            .collect();
         let footer = Paragraph::new(Line::from(items))
             .block(Block::default().borders(Borders::ALL))
             .alignment(Alignment::Center);
@@ -257,10 +297,14 @@ fn draw_game(
         // same vertical space in both states — no shift on transition.
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(0),
+                Constraint::Length(3),
+            ])
             .split(area);
         draw_status_bar(frame, chunks[0], game, hint);
-        draw_board(frame, chunks[1], &game.board, &game.status, active_cell, cell_active, &game.config, hint);
+        draw_board(frame, chunks[1], game, active_cell, cell_active, hint);
         draw_hint_footer(frame, chunks[2], hint);
     }
 }
@@ -276,18 +320,17 @@ fn draw_status_bar(
     let secs = elapsed.as_secs();
 
     // Bold yellow counter when the active hint requires global mine count.
-    let counter_style = if hint.map_or(false, |h| h.uses_global) {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    let counter_style = if hint.is_some_and(|h| h.uses_global) {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
     };
 
     let text = Line::from(vec![
         Span::styled("  💣 ", Style::default()),
-        Span::styled(
-            format!("{:03}", mines_left),
-            counter_style,
-        ),
+        Span::styled(format!("{:03}", mines_left), counter_style),
         Span::raw("          "),
         Span::styled(
             format!("{:02}:{:02}", secs / 60, secs % 60),
@@ -310,22 +353,26 @@ fn draw_status_bar(
 fn draw_hint_footer(frame: &mut ratatui::Frame, area: Rect, hint: Option<&HintState>) {
     let line = if let Some(h) = hint {
         let (label, color) = match (!h.mine_targets.is_empty(), !h.safe_targets.is_empty()) {
-            (true, true)  => ("Mine & safe cells", Color::Yellow),
-            (true, false) => ("Mine here",         Color::Red),
-            _             => ("Safe to reveal",    Color::Green),
+            (true, true) => ("Mine & safe cells", Color::Yellow),
+            (true, false) => ("Mine here", Color::Red),
+            _ => ("Safe to reveal", Color::Green),
         };
         let tier = if h.uses_global { " (global)" } else { "" };
         Line::from(vec![
             Span::styled("💡 ", Style::default()),
-            Span::styled(label, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                label,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(tier, Style::default().fg(Color::DarkGray)),
             Span::styled("          ", Style::default()),
             Span::styled("[ ? ] Hint", Style::default().fg(Color::DarkGray)),
         ])
     } else {
-        Line::from(vec![
-            Span::styled("[ ? ] Hint", Style::default().fg(Color::DarkGray)),
-        ])
+        Line::from(vec![Span::styled(
+            "[ ? ] Hint",
+            Style::default().fg(Color::DarkGray),
+        )])
     };
     let para = Paragraph::new(line)
         .block(Block::default().borders(Borders::ALL))
@@ -336,14 +383,14 @@ fn draw_hint_footer(frame: &mut ratatui::Frame, area: Rect, hint: Option<&HintSt
 fn draw_board(
     frame: &mut ratatui::Frame,
     area: Rect,
-    board: &crate::types::Board,
-    status: &GameStatus,
+    game: &crate::types::GameState,
     active_cell: (u16, u16),
     cell_active: bool,
-    config: &crate::types::GameConfig,
     hint: Option<&HintState>,
 ) {
-    let detonated = match status {
+    let board = &game.board;
+    let config = &game.config;
+    let detonated = match &game.status {
         GameStatus::Lost { detonated } => Some(*detonated),
         _ => None,
     };
@@ -373,14 +420,14 @@ fn draw_board(
         None
     };
 
-    let stride_w = CELL_WIDTH + BORDER_COL;   // 3
-    let stride_h = CELL_HEIGHT + BORDER_ROW;  // 2
-    let board_w  = config.width  * stride_w + BORDER_COL;
-    let board_h  = config.height * stride_h + BORDER_ROW;
-    let origin   = center_rect(board_w, board_h, area);
+    let stride_w = CELL_WIDTH + BORDER_COL; // 3
+    let stride_h = CELL_HEIGHT + BORDER_ROW; // 2
+    let board_w = config.width * stride_w + BORDER_COL;
+    let board_h = config.height * stride_h + BORDER_ROW;
+    let origin = center_rect(board_w, board_h, area);
 
     let border_style = Style::default().fg(Color::DarkGray);
-    let blank_style  = Style::default().fg(Color::Reset).bg(Color::Reset);
+    let blank_style = Style::default().fg(Color::Reset).bg(Color::Reset);
 
     // Returns true if this in-bounds cell should dissolve into empty space.
     // Out-of-bounds coordinates (outside the board) are never zero.
@@ -414,9 +461,13 @@ fn draw_board(
         changed = false;
         for cy in 0..h {
             for cx in 0..w {
-                if exposed[cy * w + cx] { continue; }
+                if exposed[cy * w + cx] {
+                    continue;
+                }
                 let c = board.get(cx as u16, cy as u16);
-                if c.visibility != CellVisibility::Revealed || c.is_mine { continue; }
+                if c.visibility != CellVisibility::Revealed || c.is_mine {
+                    continue;
+                }
                 // Check orthogonal neighbours for an already-exposed revealed cell.
                 let neighbours = [
                     (cx.wrapping_sub(1), cy),
@@ -445,14 +496,15 @@ fn draw_board(
     // A segment is suppressed when either adjacent cell is zero OR both adjacent
     // cells are exposed (both touch open space, so the border between them is redundant).
     // Perimeter segments are never suppressed.
-    let h_seg_active = |cx: i32, cy_above: i32, cy_below: i32, is_top: bool, is_bot: bool| -> bool {
-        if is_top || is_bot {
-            return true;
-        }
-        !(is_zero(cx, cy_above)
-            || is_zero(cx, cy_below)
-            || (is_exposed(cx, cy_above) && is_exposed(cx, cy_below)))
-    };
+    let h_seg_active =
+        |cx: i32, cy_above: i32, cy_below: i32, is_top: bool, is_bot: bool| -> bool {
+            if is_top || is_bot {
+                return true;
+            }
+            !(is_zero(cx, cy_above)
+                || is_zero(cx, cy_below)
+                || (is_exposed(cx, cy_above) && is_exposed(cx, cy_below)))
+        };
 
     let v_seg_active = |cx_left: i32, cx_right: i32, cy: i32, is_lft: bool, is_rgt: bool| -> bool {
         if is_lft || is_rgt {
@@ -480,27 +532,27 @@ fn draw_board(
                 let is_rgt = cx == config.width as i32;
 
                 let arm_w = !is_lft && h_seg_active(cx - 1, cy_above, cy_below, is_top, is_bot);
-                let arm_e = !is_rgt && h_seg_active(cx,     cy_above, cy_below, is_top, is_bot);
+                let arm_e = !is_rgt && h_seg_active(cx, cy_above, cy_below, is_top, is_bot);
                 let arm_n = !is_top && v_seg_active(cx - 1, cx, cy_above, is_lft, is_rgt);
                 let arm_s = !is_bot && v_seg_active(cx - 1, cx, cy_below, is_lft, is_rgt);
 
                 let junction = match (arm_n, arm_s, arm_w, arm_e) {
                     (false, false, false, false) => " ",
-                    (false, false, true,  true ) => "─",
-                    (true,  true,  false, false) => "│",
-                    (false, true,  false, true ) => "┌",
-                    (false, true,  true,  false) => "┐",
-                    (true,  false, false, true ) => "└",
-                    (true,  false, true,  false) => "┘",
-                    (false, true,  true,  true ) => "┬",
-                    (true,  false, true,  true ) => "┴",
-                    (true,  true,  false, true ) => "├",
-                    (true,  true,  true,  false) => "┤",
-                    (true,  true,  true,  true ) => "┼",
-                    (true,  false, false, false) => "╵",
-                    (false, true,  false, false) => "╷",
-                    (false, false, true,  false) => "╴",
-                    (false, false, false, true ) => "╶",
+                    (false, false, true, true) => "─",
+                    (true, true, false, false) => "│",
+                    (false, true, false, true) => "┌",
+                    (false, true, true, false) => "┐",
+                    (true, false, false, true) => "└",
+                    (true, false, true, false) => "┘",
+                    (false, true, true, true) => "┬",
+                    (true, false, true, true) => "┴",
+                    (true, true, false, true) => "├",
+                    (true, true, true, false) => "┤",
+                    (true, true, true, true) => "┼",
+                    (true, false, false, false) => "╵",
+                    (false, true, false, false) => "╷",
+                    (false, false, true, false) => "╴",
+                    (false, false, false, true) => "╶",
                 };
 
                 if junction == " " {
@@ -529,19 +581,22 @@ fn draw_board(
 
                 let cell = board.get(cx as u16, cy as u16);
                 let pos = (cx as u16, cy as u16);
-                let is_active    = cell_active && pos == active_cell;
-                let is_detonated = detonated == Some(pos);
-                let is_neighbour = !is_active && neighbour_zone.map_or(false, |(zx, zy)| {
-                    (cx as u16).abs_diff(zx) <= 1 && (cy as u16).abs_diff(zy) <= 1
-                });
-                let is_hint_mine_target = hint_mine_targets.contains(&pos);
-                let is_hint_safe_target = hint_safe_targets.contains(&pos);
-                let is_hint_witness     = hint_witnesses.contains(&pos);
-                let is_wrong_flag = detonated.is_some()
-                    && cell.visibility == CellVisibility::Flagged
-                    && !cell.is_mine;
-                spans.push(cell_span(cell, is_active, is_neighbour, is_detonated, is_wrong_flag,
-                                     is_hint_mine_target, is_hint_safe_target, is_hint_witness));
+                let active = cell_active && pos == active_cell;
+                let highlight = CellHighlight {
+                    active,
+                    neighbour: !active
+                        && neighbour_zone.is_some_and(|(zx, zy)| {
+                            (cx as u16).abs_diff(zx) <= 1 && (cy as u16).abs_diff(zy) <= 1
+                        }),
+                    detonated: detonated == Some(pos),
+                    wrong_flag: detonated.is_some()
+                        && cell.visibility == CellVisibility::Flagged
+                        && !cell.is_mine,
+                    hint_mine_target: hint_mine_targets.contains(&pos),
+                    hint_safe_target: hint_safe_targets.contains(&pos),
+                    hint_witness: hint_witnesses.contains(&pos),
+                };
+                spans.push(cell_span(cell, highlight));
             }
             // Right perimeter border — always drawn.
             spans.push(Span::styled("│", border_style));
@@ -557,44 +612,37 @@ fn draw_board(
     }
 }
 
+/// Per-cell highlight flags passed from `draw_board` to `cell_span`.
+#[derive(Clone, Copy)]
+struct CellHighlight {
+    active: bool,
+    neighbour: bool,
+    detonated: bool,
+    wrong_flag: bool,
+    hint_mine_target: bool,
+    hint_safe_target: bool,
+    hint_witness: bool,
+}
+
 /// Each cell is rendered as a single fullwidth Unicode character string.
 /// Fullwidth chars occupy exactly 2 terminal columns, giving square cells on
 /// any terminal regardless of font aspect ratio.
-fn cell_span<'a>(
-    cell: &crate::types::Cell,
-    is_active: bool,
-    is_neighbour: bool,
-    is_detonated: bool,
-    is_wrong_flag: bool,
-    is_hint_mine_target: bool,
-    is_hint_safe_target: bool,
-    is_hint_witness: bool,
-) -> Span<'a> {
+fn cell_span<'a>(cell: &crate::types::Cell, highlight: CellHighlight) -> Span<'a> {
     // Fullwidth characters: each is a 2-column glyph.
     // Numbers use fullwidth digits; other states use block/emoji chars.
     // Base symbol and colours by cell state.
     let (sym, fg, bg) = match cell.visibility {
         CellVisibility::Hidden => (
-            "  ",   // empty — background is the only distinction from revealed zeros
+            "  ", // empty — background is the only distinction from revealed zeros
             Color::Reset,
             Color::Reset,
         ),
         // After a loss, flags on safe cells are marked as mistakes.
-        CellVisibility::Flagged if is_wrong_flag => (
-            "❌",
-            Color::White,
-            Color::Rgb(90, 20, 20),
-        ),
-        CellVisibility::Flagged => (
-            "🚩",
-            Color::Red,
-            Color::Reset,
-        ),
-        CellVisibility::Question => (
-            "？",
-            Color::Yellow,
-            Color::Reset,
-        ),
+        CellVisibility::Flagged if highlight.wrong_flag => {
+            ("❌", Color::White, Color::Rgb(90, 20, 20))
+        }
+        CellVisibility::Flagged => ("🚩", Color::Red, Color::Reset),
+        CellVisibility::Question => ("？", Color::Yellow, Color::Reset),
         CellVisibility::Revealed => {
             if cell.is_mine {
                 ("💣", Color::White, Color::Reset)
@@ -602,14 +650,14 @@ fn cell_span<'a>(
                 match cell.adjacent_mines {
                     // Zero: truly empty — no symbol, terminal default background.
                     0 => ("  ", Color::Reset, Color::Reset),
-                    1 => ("１", Color::Blue,    Color::Reset),
-                    2 => ("２", Color::Green,   Color::Reset),
-                    3 => ("３", Color::Red,     Color::Reset),
+                    1 => ("１", Color::Blue, Color::Reset),
+                    2 => ("２", Color::Green, Color::Reset),
+                    3 => ("３", Color::Red, Color::Reset),
                     4 => ("４", Color::Magenta, Color::Reset),
-                    5 => ("５", Color::Yellow,  Color::Reset),
-                    6 => ("６", Color::Cyan,    Color::Reset),
-                    7 => ("７", Color::White,   Color::Reset),
-                    _ => ("８", Color::Gray,    Color::Reset),
+                    5 => ("５", Color::Yellow, Color::Reset),
+                    6 => ("６", Color::Cyan, Color::Reset),
+                    7 => ("７", Color::White, Color::Reset),
+                    _ => ("８", Color::Gray, Color::Reset),
                 }
             }
         }
@@ -620,18 +668,27 @@ fn cell_span<'a>(
     // bg here prevents that. The fg colour is the only colour signal for content.
     let mut style = Style::default().fg(fg).bg(bg);
 
-    if is_detonated {
-        style = style.bg(Color::Red).fg(Color::White).add_modifier(Modifier::BOLD);
-    } else if is_active {
+    if highlight.detonated {
+        style = style
+            .bg(Color::Red)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD);
+    } else if highlight.active {
         style = style.bg(Color::White).fg(Color::Black);
-    } else if is_hint_mine_target {
-        style = style.bg(Color::Rgb(130, 40, 20)).fg(Color::White).add_modifier(Modifier::BOLD);
-    } else if is_hint_safe_target {
-        style = style.bg(Color::Rgb(20, 110, 50)).fg(Color::White).add_modifier(Modifier::BOLD);
-    } else if is_hint_witness && matches!(cell.visibility, CellVisibility::Revealed) {
+    } else if highlight.hint_mine_target {
+        style = style
+            .bg(Color::Rgb(130, 40, 20))
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD);
+    } else if highlight.hint_safe_target {
+        style = style
+            .bg(Color::Rgb(20, 110, 50))
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD);
+    } else if highlight.hint_witness && matches!(cell.visibility, CellVisibility::Revealed) {
         // Subtle amber tint on witness cells.
         style = style.bg(Color::Rgb(70, 60, 10));
-    } else if is_neighbour && !matches!(cell.visibility, CellVisibility::Revealed) {
+    } else if highlight.neighbour && !matches!(cell.visibility, CellVisibility::Revealed) {
         style = style.bg(Color::Rgb(70, 80, 120));
     }
 
@@ -643,8 +700,6 @@ fn cell_span<'a>(
 // ---------------------------------------------------------------------------
 
 pub const GAME_OVER_ITEMS: &[&str] = &["New Game", "Main Menu", "Quit"];
-
-
 
 /// Returns the terminal Rects for the three game-over footer items.
 /// Items are on a single row in the last 3 rows of the screen:
@@ -659,9 +714,7 @@ pub fn game_over_item_rects(term_size: (u16, u16)) -> [Rect; 3] {
     let left_pad = (inner_w.saturating_sub(FULL_LEN)) / 2;
     // Footer content row is term_height - 2 (inside the border)
     let row = term_size.1.saturating_sub(2);
-    [0usize, 1, 2].map(|i| {
-        Rect::new(1 + left_pad + STARTS[i], row, WIDTHS[i], 1)
-    })
+    [0usize, 1, 2].map(|i| Rect::new(1 + left_pad + STARTS[i], row, WIDTHS[i], 1))
 }
 
 /// Returns the popup Rect and the row of the first main menu item.
@@ -728,19 +781,39 @@ fn draw_leaderboard(
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ])
         .split(area);
 
     // Tab bar — highlight active tab and hovered tab
     let tabs_line = Line::from(vec![
-        tab_span("Beginner",     tab == LeaderboardTab::Beginner,     ui_hover == Some(UiHover::Tab(0))),
+        tab_span(
+            "Beginner",
+            tab == LeaderboardTab::Beginner,
+            ui_hover == Some(UiHover::Tab(0)),
+        ),
         Span::raw(" | "),
-        tab_span("Intermediate", tab == LeaderboardTab::Intermediate, ui_hover == Some(UiHover::Tab(1))),
+        tab_span(
+            "Intermediate",
+            tab == LeaderboardTab::Intermediate,
+            ui_hover == Some(UiHover::Tab(1)),
+        ),
         Span::raw(" | "),
-        tab_span("Expert",       tab == LeaderboardTab::Expert,       ui_hover == Some(UiHover::Tab(2))),
+        tab_span(
+            "Expert",
+            tab == LeaderboardTab::Expert,
+            ui_hover == Some(UiHover::Tab(2)),
+        ),
     ]);
     let tabs = Paragraph::new(tabs_line)
-        .block(Block::default().borders(Borders::ALL).title(" Leaderboard "))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Leaderboard "),
+        )
         .alignment(Alignment::Center);
     frame.render_widget(tabs, chunks[0]);
 
@@ -753,7 +826,12 @@ fn draw_leaderboard(
         .enumerate()
         .map(|(i, e)| {
             let secs = e.time.as_secs();
-            let time_str = format!("{:02}:{:02}.{:03}", secs / 60, secs % 60, e.time.subsec_millis());
+            let time_str = format!(
+                "{:02}:{:02}.{:03}",
+                secs / 60,
+                secs % 60,
+                e.time.subsec_millis()
+            );
             let date_str = e.achieved_at.format("%Y-%m-%d").to_string();
             Row::new(vec![
                 RatCell::from(format!("  {:>2}.", i + 1)),
@@ -768,22 +846,34 @@ fn draw_leaderboard(
 
     let table = Table::new(
         display_rows,
-        [Constraint::Length(6), Constraint::Length(12), Constraint::Fill(1)],
+        [
+            Constraint::Length(6),
+            Constraint::Length(12),
+            Constraint::Fill(1),
+        ],
     )
-    .header(Row::new(vec!["  #", "Time", "Date"]).style(
-        Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-    ))
+    .header(
+        Row::new(vec!["  #", "Time", "Date"])
+            .style(Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
+    )
     .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM));
     frame.render_widget(table, chunks[1]);
 
     // Footer: hint text + clickable [ Back ] button
     let back_style = if ui_hover == Some(UiHover::Back) {
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     };
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled("[ ← / → ] Switch tab    ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "[ ← / → ] Switch tab    ",
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::styled("[ Back ]", back_style),
     ]))
     .block(Block::default().borders(Borders::ALL))
@@ -802,7 +892,9 @@ fn tab_span(label: &'static str, active: bool, hovered: bool) -> Span<'static> {
     } else if hovered {
         Span::styled(
             label,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(label, Style::default().fg(Color::DarkGray))
@@ -870,7 +962,10 @@ fn translate_main_menu_click(
         MouseEventKind::Down(MouseButton::Left) => {
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::MenuSelect(idx), board_pos: None })
+                Some(GameEvent {
+                    action: GameAction::MenuSelect(idx),
+                    board_pos: None,
+                })
             } else {
                 None
             }
@@ -878,7 +973,10 @@ fn translate_main_menu_click(
         MouseEventKind::Moved => {
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::MenuHover(idx), board_pos: None })
+                Some(GameEvent {
+                    action: GameAction::MenuHover(idx),
+                    board_pos: None,
+                })
             } else {
                 None
             }
@@ -898,8 +996,8 @@ fn translate_new_game_menu_click(
     // Hint line: border(1) + 3 items + blank = row 5 inside popup → popup.y + 5
     // "[ Back ]" starts at char 19 inside the line → popup.x + 1 + 19
     let back_row = popup.y + 5;
-    let back_x   = popup.x + 1 + 19;
-    let back_w   = 8u16;
+    let back_x = popup.x + 1 + 19;
+    let back_w = 8u16;
 
     if mouse.column < popup.x || mouse.column >= popup.x + popup.width {
         return None;
@@ -908,31 +1006,40 @@ fn translate_new_game_menu_click(
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             // Precise [ Back ] hit
-            if mouse.row == back_row
-                && mouse.column >= back_x
-                && mouse.column < back_x + back_w
-            {
-                return Some(GameEvent { action: GameAction::OpenMenu, board_pos: None });
+            if mouse.row == back_row && mouse.column >= back_x && mouse.column < back_x + back_w {
+                return Some(GameEvent {
+                    action: GameAction::OpenMenu,
+                    board_pos: None,
+                });
             }
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::MenuSelect(idx), board_pos: None })
+                Some(GameEvent {
+                    action: GameAction::MenuSelect(idx),
+                    board_pos: None,
+                })
             } else {
                 None
             }
         }
         MouseEventKind::Moved => {
-            if mouse.row == back_row
-                && mouse.column >= back_x
-                && mouse.column < back_x + back_w
-            {
-                return Some(GameEvent { action: GameAction::HoverBack, board_pos: None });
+            if mouse.row == back_row && mouse.column >= back_x && mouse.column < back_x + back_w {
+                return Some(GameEvent {
+                    action: GameAction::HoverBack,
+                    board_pos: None,
+                });
             }
             if mouse.row >= first_row && mouse.row <= last_row {
                 let idx = (mouse.row - first_row) as usize;
-                Some(GameEvent { action: GameAction::MenuHover(idx), board_pos: None })
+                Some(GameEvent {
+                    action: GameAction::MenuHover(idx),
+                    board_pos: None,
+                })
             } else {
-                Some(GameEvent { action: GameAction::ClearUiHover, board_pos: None })
+                Some(GameEvent {
+                    action: GameAction::ClearUiHover,
+                    board_pos: None,
+                })
             }
         }
         _ => None,
@@ -949,11 +1056,11 @@ fn translate_leaderboard_click(
 
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            if mouse.row == back.y
-                && mouse.column >= back.x
-                && mouse.column < back.x + back.width
-            {
-                return Some(GameEvent { action: GameAction::OpenMenu, board_pos: None });
+            if mouse.row == back.y && mouse.column >= back.x && mouse.column < back.x + back.width {
+                return Some(GameEvent {
+                    action: GameAction::OpenMenu,
+                    board_pos: None,
+                });
             }
             if mouse.row >= tab_bar.y && mouse.row < tab_bar.y + tab_bar.height {
                 for (i, rect) in tab_rects.iter().enumerate() {
@@ -968,11 +1075,11 @@ fn translate_leaderboard_click(
             None
         }
         MouseEventKind::Moved => {
-            if mouse.row == back.y
-                && mouse.column >= back.x
-                && mouse.column < back.x + back.width
-            {
-                return Some(GameEvent { action: GameAction::HoverBack, board_pos: None });
+            if mouse.row == back.y && mouse.column >= back.x && mouse.column < back.x + back.width {
+                return Some(GameEvent {
+                    action: GameAction::HoverBack,
+                    board_pos: None,
+                });
             }
             if mouse.row >= tab_bar.y && mouse.row < tab_bar.y + tab_bar.height {
                 for (i, rect) in tab_rects.iter().enumerate() {
@@ -984,7 +1091,10 @@ fn translate_leaderboard_click(
                     }
                 }
             }
-            Some(GameEvent { action: GameAction::ClearUiHover, board_pos: None })
+            Some(GameEvent {
+                action: GameAction::ClearUiHover,
+                board_pos: None,
+            })
         }
         _ => None,
     }
@@ -1030,24 +1140,23 @@ fn translate_game_over_click(
     }
 }
 
-fn translate_key(
-    key: &crossterm::event::KeyEvent,
-    _screen: &Screen,
-) -> Option<GameAction> {
+fn translate_key(key: &crossterm::event::KeyEvent, _screen: &Screen) -> Option<GameAction> {
     use crossterm::event::KeyEventKind;
-    if key.kind != KeyEventKind::Press { return None; }
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
 
     match key.code {
         KeyCode::Char('q') | KeyCode::Char('Q') => Some(GameAction::Quit),
-        KeyCode::Esc                             => Some(GameAction::OpenMenu),
-        KeyCode::Enter | KeyCode::Char(' ')      => Some(GameAction::Reveal),
-        KeyCode::Char('f') | KeyCode::Char('F')  => Some(GameAction::CycleFlag),
-        KeyCode::Char('?')                       => Some(GameAction::Hint),
-        KeyCode::Up    | KeyCode::Char('k')      => Some(GameAction::MoveCursor(0, -1)),
-        KeyCode::Down  | KeyCode::Char('j')      => Some(GameAction::MoveCursor(0, 1)),
-        KeyCode::Left  | KeyCode::Char('h')      => Some(GameAction::MoveCursor(-1, 0)),
-        KeyCode::Right | KeyCode::Char('l')      => Some(GameAction::MoveCursor(1, 0)),
-        KeyCode::Tab                             => Some(GameAction::MoveCursor(0, 1)),
+        KeyCode::Esc => Some(GameAction::OpenMenu),
+        KeyCode::Enter | KeyCode::Char(' ') => Some(GameAction::Reveal),
+        KeyCode::Char('f') | KeyCode::Char('F') => Some(GameAction::CycleFlag),
+        KeyCode::Char('?') => Some(GameAction::Hint),
+        KeyCode::Up | KeyCode::Char('k') => Some(GameAction::MoveCursor(0, -1)),
+        KeyCode::Down | KeyCode::Char('j') => Some(GameAction::MoveCursor(0, 1)),
+        KeyCode::Left | KeyCode::Char('h') => Some(GameAction::MoveCursor(-1, 0)),
+        KeyCode::Right | KeyCode::Char('l') => Some(GameAction::MoveCursor(1, 0)),
+        KeyCode::Tab => Some(GameAction::MoveCursor(0, 1)),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Some(GameAction::Quit)
         }
@@ -1073,14 +1182,17 @@ fn translate_mouse(
     let by = (row / stride_h).min(board_size.1.saturating_sub(1));
 
     let action = match mouse.kind {
-        MouseEventKind::Down(MouseButton::Left)  => GameAction::Reveal,
+        MouseEventKind::Down(MouseButton::Left) => GameAction::Reveal,
         MouseEventKind::Down(MouseButton::Right) => GameAction::CycleFlag,
         // Mouse move updates hover position but triggers no action.
         MouseEventKind::Moved => GameAction::MoveCursor(0, 0),
         _ => return None,
     };
 
-    Some(GameEvent { action, board_pos: Some((bx, by)) })
+    Some(GameEvent {
+        action,
+        board_pos: Some((bx, by)),
+    })
 }
 
 /// Given the current terminal size and board config, returns the top-left

@@ -2,9 +2,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 
 use crate::solver::{self, SolveResult};
-use crate::types::{
-    Board, CellVisibility, GameConfig, GameState, GameStatus,
-};
+use crate::types::{Board, CellVisibility, GameConfig, GameState, GameStatus};
 
 // ---------------------------------------------------------------------------
 // Mine placement
@@ -117,7 +115,7 @@ pub fn reveal(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
         state.board.get_mut(x, y).visibility = CellVisibility::Revealed;
         state.status = GameStatus::Lost { detonated: (x, y) };
         reveal_all_mines(&mut state.board);
-        return vec![];  // detonation effect triggered separately
+        return vec![]; // detonation effect triggered separately
     }
 
     let newly_revealed = if cell.adjacent_mines == 0 {
@@ -168,7 +166,6 @@ fn reveal_all_mines(board: &mut Board) {
         }
     }
 }
-
 
 /// Reveals all hidden (non-flagged) neighbours of a revealed cell, no safety check.
 pub fn chord_reveal(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
@@ -233,8 +230,8 @@ pub fn cycle_flag(state: &mut GameState, x: u16, y: u16) -> bool {
     state.board.get_mut(x, y).visibility = new_visibility;
 
     match (was_flagged, is_flagged) {
-        (false, true)  => state.flags_placed += 1,
-        (true,  false) => state.flags_placed  = state.flags_placed.saturating_sub(1),
+        (false, true) => state.flags_placed += 1,
+        (true, false) => state.flags_placed = state.flags_placed.saturating_sub(1),
         _ => {}
     }
 
@@ -248,9 +245,11 @@ pub fn cycle_flag(state: &mut GameState, x: u16, y: u16) -> bool {
 /// Checks whether all non-mine cells are revealed. If so, flags all remaining
 /// mines and transitions to Won.
 fn check_win(state: &mut GameState) {
-    let all_clear = state.board.cells.iter().all(|c| {
-        c.is_mine || c.visibility == CellVisibility::Revealed
-    });
+    let all_clear = state
+        .board
+        .cells
+        .iter()
+        .all(|c| c.is_mine || c.visibility == CellVisibility::Revealed);
 
     if all_clear {
         // Auto-flag any unflagged mines.
@@ -302,7 +301,15 @@ pub fn detonate_effect() -> Effect {
     // Use RGB tuples — accepted by Into<Color> on both ratatui and ratatui_core.
     // Slam to white-on-red, then fade back to whatever the board was rendering.
     fx::sequence(&[
-        fx::fade_to((255u8, 255u8, 255u8), (180u8, 20u8, 20u8), (60, Interpolation::Linear)),
-        fx::fade_from((255u8, 255u8, 255u8), (180u8, 20u8, 20u8), (500, Interpolation::QuadOut)),
+        fx::fade_to(
+            (255u8, 255u8, 255u8),
+            (180u8, 20u8, 20u8),
+            (60, Interpolation::Linear),
+        ),
+        fx::fade_from(
+            (255u8, 255u8, 255u8),
+            (180u8, 20u8, 20u8),
+            (500, Interpolation::QuadOut),
+        ),
     ])
 }

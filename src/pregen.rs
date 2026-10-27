@@ -38,6 +38,8 @@ pub struct PregenHandle {
     shared: Arc<Shared>,
 }
 
+// No `Default`: `new()` spawns a worker thread, which `Default` would hide.
+#[allow(clippy::new_without_default)]
 impl PregenHandle {
     pub fn new() -> Self {
         let shared = Arc::new(Shared {
@@ -58,7 +60,11 @@ impl PregenHandle {
     pub fn submit(&self, first_click: (u16, u16), config: GameConfig) {
         let gen = self.shared.generation.fetch_add(1, Ordering::Release) + 1;
         *self.shared.result.lock().unwrap() = None;
-        *self.shared.job.lock().unwrap() = Some(Job { first_click, config, generation_id: gen });
+        *self.shared.job.lock().unwrap() = Some(Job {
+            first_click,
+            config,
+            generation_id: gen,
+        });
         self.shared.wake.notify_one();
     }
 
