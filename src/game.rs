@@ -14,15 +14,26 @@ use crate::types::{
 ///   - A safe zone around the first click (3×3 when density allows, else 1×1).
 ///   - The resulting puzzle is solvable without guessing.
 ///
-/// Retries up to `MAX_ATTEMPTS` times; on the rare chance every attempt fails,
-/// falls back to the last layout (preserving playability over correctness).
+/// Keeps rerolling until a solvable layout is found.
 pub fn place_mines(board: &mut Board, config: &GameConfig, first_click: (u16, u16)) {
-    const MAX_ATTEMPTS: usize = 100;
+    generate_mines(board, config, first_click, || false);
+}
 
+/// Shared mine generator behind `place_mines` and the pregen worker.
+/// Rerolls layouts until one is solvable, checking `cancelled` before each
+/// attempt. Returns `false` if cancelled before a solvable layout was found.
+pub(crate) fn generate_mines(
+    board: &mut Board,
+    config: &GameConfig,
+    first_click: (u16, u16),
+    cancelled: impl Fn() -> bool,
+) -> bool {
     let (fx, fy) = first_click;
     let total = (config.width * config.height) as usize;
+    let mine_count = config.mine_count as usize;
+    debug_assert!(mine_count < total, "no room for a safe first click");
 
-    let excluded: std::collections::HashSet<usize> = (-1i32..=1)
+    let neighbourhood: Vec<usize> = (-1i32..=1)
         .flat_map(|dy| (-1i32..=1).map(move |dx| (dx, dy)))
         .filter_map(|(dx, dy)| {
             let nx = fx as i32 + dx;
@@ -35,29 +46,35 @@ pub fn place_mines(board: &mut Board, config: &GameConfig, first_click: (u16, u1
         })
         .collect();
 
+    // Fall back to a 1×1 safe zone when the 3×3 doesn't leave room for every mine.
+    let excluded: Vec<usize> = if total - neighbourhood.len() >= mine_count {
+        neighbourhood
+    } else {
+        vec![board.idx(fx, fy)]
+    };
+
     let mut candidates: Vec<usize> = (0..total).filter(|i| !excluded.contains(i)).collect();
     let mut rng = thread_rng();
 
-    for attempt in 0..MAX_ATTEMPTS {
+    loop {
+        if cancelled() {
+            return false;
+        }
+
         // Clear previous layout.
         for cell in board.cells.iter_mut() {
             cell.is_mine = false;
             cell.adjacent_mines = 0;
         }
 
-        candidates.shuffle(&mut rng);
-        for &idx in candidates.iter().take(config.mine_count as usize) {
+        let (mines, _) = candidates.partial_shuffle(&mut rng, mine_count);
+        for &idx in mines.iter() {
             board.cells[idx].is_mine = true;
         }
         compute_adjacency(board);
 
         if solver::solve(board, first_click) == SolveResult::Solved {
-            return;
-        }
-
-        // Last attempt: keep whatever we have rather than leaving an empty board.
-        if attempt == MAX_ATTEMPTS - 1 {
-            return;
+            return true;
         }
     }
 }

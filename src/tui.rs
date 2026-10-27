@@ -537,7 +537,10 @@ fn draw_board(
                 let is_hint_mine_target = hint_mine_targets.contains(&pos);
                 let is_hint_safe_target = hint_safe_targets.contains(&pos);
                 let is_hint_witness     = hint_witnesses.contains(&pos);
-                spans.push(cell_span(cell, is_active, is_neighbour, is_detonated,
+                let is_wrong_flag = detonated.is_some()
+                    && cell.visibility == CellVisibility::Flagged
+                    && !cell.is_mine;
+                spans.push(cell_span(cell, is_active, is_neighbour, is_detonated, is_wrong_flag,
                                      is_hint_mine_target, is_hint_safe_target, is_hint_witness));
             }
             // Right perimeter border — always drawn.
@@ -562,6 +565,7 @@ fn cell_span<'a>(
     is_active: bool,
     is_neighbour: bool,
     is_detonated: bool,
+    is_wrong_flag: bool,
     is_hint_mine_target: bool,
     is_hint_safe_target: bool,
     is_hint_witness: bool,
@@ -574,6 +578,12 @@ fn cell_span<'a>(
             "  ",   // empty — background is the only distinction from revealed zeros
             Color::Reset,
             Color::Reset,
+        ),
+        // After a loss, flags on safe cells are marked as mistakes.
+        CellVisibility::Flagged if is_wrong_flag => (
+            "❌",
+            Color::White,
+            Color::Rgb(90, 20, 20),
         ),
         CellVisibility::Flagged => (
             "🚩",

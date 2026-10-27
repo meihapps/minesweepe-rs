@@ -1,12 +1,7 @@
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-use rand::seq::SliceRandom;
-use rand::thread_rng;
-
-use crate::game::compute_adjacency;
-use crate::solver::{self, SolveResult};
+use crate::game::generate_mines;
 use crate::types::{Board, GameConfig};
 
 // ---------------------------------------------------------------------------
@@ -108,49 +103,8 @@ fn worker(shared: Arc<Shared>) {
 }
 
 fn generate(job: &Job, generation: &AtomicU64) -> Option<Board> {
-    const MAX_ATTEMPTS: usize = 200;
-
     let config = &job.config;
-    let (fx, fy) = job.first_click;
-    let total = (config.width * config.height) as usize;
     let mut board = Board::new(config.width, config.height);
-
-    let excluded: HashSet<usize> = (-1i32..=1)
-        .flat_map(|dy| (-1i32..=1).map(move |dx| (dx, dy)))
-        .filter_map(|(dx, dy)| {
-            let nx = fx as i32 + dx;
-            let ny = fy as i32 + dy;
-            if board.in_bounds(nx, ny) {
-                Some(board.idx(nx as u16, ny as u16))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut candidates: Vec<usize> = (0..total).filter(|i| !excluded.contains(i)).collect();
-    let mut rng = thread_rng();
-
-    for _ in 0..MAX_ATTEMPTS {
-        if generation.load(Ordering::Relaxed) != job.generation_id {
-            return None;
-        }
-
-        for cell in board.cells.iter_mut() {
-            cell.is_mine = false;
-            cell.adjacent_mines = 0;
-        }
-
-        candidates.shuffle(&mut rng);
-        for &idx in candidates.iter().take(config.mine_count as usize) {
-            board.cells[idx].is_mine = true;
-        }
-        compute_adjacency(&mut board);
-
-        if solver::solve(&board, job.first_click) == SolveResult::Solved {
-            return Some(board);
-        }
-    }
-
-    None
+    let cancelled = || generation.load(Ordering::Relaxed) != job.generation_id;
+    generate_mines(&mut board, config, job.first_click, cancelled).then_some(board)
 }

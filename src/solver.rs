@@ -417,6 +417,7 @@ pub fn solve(board: &Board, first_click: (u16, u16)) -> SolveResult {
         let Some(d) = hint_inner(board, &revealed, &flagged, flags_placed, total_mines, true) else {
             return SolveResult::Unsolvable;
         };
+        debug_check_deduction(board, &flagged, &d);
 
         for (x, y) in d.mine_cells {
             let idx = board.idx(x, y);
@@ -436,7 +437,26 @@ pub fn hint(
     flags_placed: u16,
     total_mines: u16,
 ) -> Option<Deduction> {
-    hint_inner(board, revealed, flagged, flags_placed, total_mines, false)
+    let d = hint_inner(board, revealed, flagged, flags_placed, total_mines, false);
+    if let Some(d) = &d {
+        debug_check_deduction(board, flagged, d);
+    }
+    d
+}
+
+/// Debug-only soundness check: every deduced mine is a mine and every deduced
+/// safe cell is safe. Skipped when any flag is wrong, since the solver trusts
+/// flags and a player's misflag can legitimately lead to a wrong deduction.
+fn debug_check_deduction(board: &Board, flagged: &[bool], d: &Deduction) {
+    if !cfg!(debug_assertions) { return; }
+    if flagged.iter().zip(&board.cells).any(|(&f, c)| f && !c.is_mine) { return; }
+
+    for &(x, y) in &d.mine_cells {
+        assert!(board.get(x, y).is_mine, "solver deduced ({x}, {y}) is a mine, but it is safe");
+    }
+    for &(x, y) in &d.safe_cells {
+        assert!(!board.get(x, y).is_mine, "solver deduced ({x}, {y}) is safe, but it is a mine");
+    }
 }
 
 /// Phase 1 (trivial):  a single constraint is entirely mine or entirely safe.
@@ -597,6 +617,72 @@ mod tests {
             println!("{label}: {solved}/50 solvable, {elapsed:?} total ({per_game:?}/game)");
             assert_eq!(solved, 50, "{label}: not all generated boards were solvable");
         }
+    }
+
+    /// Property test: generate 10,000 boards across every difficulty with random
+    /// first clicks, then replay each one through the public `hint` API (not
+    /// `solve`, which the generator already relies on), checking every deduction
+    /// against the real layout and that the board clears without a guess.
+    ///
+    /// Slow, so ignored by default:  cargo test --release -- --ignored
+    #[test]
+    #[ignore]
+    fn generated_boards_clear_without_guessing() {
+        use rand::Rng;
+
+        const BOARDS: usize = 10_000;
+        let difficulties = [Difficulty::Beginner, Difficulty::Intermediate, Difficulty::Expert];
+
+        (0..BOARDS).into_par_iter().for_each(|i| {
+            let difficulty = difficulties[i % difficulties.len()];
+            let config = difficulty.config();
+            let mut rng = rand::thread_rng();
+            let first_click = (rng.gen_range(0..config.width), rng.gen_range(0..config.height));
+
+            let mut board = Board::new(config.width, config.height);
+            place_mines(&mut board, &config, first_click);
+
+            let mines: Vec<usize> = (0..board.cells.len()).filter(|&i| board.cells[i].is_mine).collect();
+            let ctx = format!("{} board, first click {first_click:?}, mines at {mines:?}", difficulty.label());
+
+            assert_eq!(mines.len(), config.mine_count as usize, "wrong mine count: {ctx}");
+            let (fx, fy) = first_click;
+            assert!(
+                board.neighbours(fx, fy).chain([first_click]).all(|(x, y)| !board.get(x, y).is_mine),
+                "mine in the safe zone: {ctx}"
+            );
+
+            let n = board.cells.len();
+            let mut revealed = vec![false; n];
+            let mut flagged = vec![false; n];
+            let mut flags_placed = 0u16;
+            flood_fill(&board, board.idx(fx, fy), &mut revealed);
+
+            while !board.cells.iter().zip(&revealed).all(|(c, &r)| c.is_mine || r) {
+                let d = hint(&board, &revealed, &flagged, flags_placed, config.mine_count)
+                    .unwrap_or_else(|| panic!("solver got stuck and would need to guess: {ctx}"));
+
+                let mut progressed = false;
+                for &(x, y) in &d.mine_cells {
+                    assert!(board.get(x, y).is_mine, "({x}, {y}) deduced mine but is safe: {ctx}");
+                    let idx = board.idx(x, y);
+                    if !flagged[idx] {
+                        flagged[idx] = true;
+                        flags_placed += 1;
+                        progressed = true;
+                    }
+                }
+                for &(x, y) in &d.safe_cells {
+                    assert!(!board.get(x, y).is_mine, "({x}, {y}) deduced safe but is a mine: {ctx}");
+                    let idx = board.idx(x, y);
+                    if !revealed[idx] {
+                        flood_fill(&board, idx, &mut revealed);
+                        progressed = true;
+                    }
+                }
+                assert!(progressed, "solver returned a deduction that changed nothing: {ctx}");
+            }
+        });
     }
 
     #[test]
