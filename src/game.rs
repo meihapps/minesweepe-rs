@@ -13,7 +13,7 @@ use crate::types::{Board, CellVisibility, GameConfig, GameState, GameStatus};
 ///   - The resulting puzzle is solvable without guessing.
 ///
 /// Keeps rerolling until a solvable layout is found.
-pub fn place_mines(board: &mut Board, config: &GameConfig, first_click: (u16, u16)) {
+pub fn place_mines(board: &mut Board, config: GameConfig, first_click: (u16, u16)) {
     generate_mines(board, config, first_click, || false);
 }
 
@@ -22,7 +22,7 @@ pub fn place_mines(board: &mut Board, config: &GameConfig, first_click: (u16, u1
 /// attempt. Returns `false` if cancelled before a solvable layout was found.
 pub(crate) fn generate_mines(
     board: &mut Board,
-    config: &GameConfig,
+    config: GameConfig,
     first_click: (u16, u16),
     cancelled: impl Fn() -> bool,
 ) -> bool {
@@ -31,17 +31,9 @@ pub(crate) fn generate_mines(
     let mine_count = config.mine_count as usize;
     debug_assert!(mine_count < total, "no room for a safe first click");
 
-    let neighbourhood: Vec<usize> = (-1i32..=1)
-        .flat_map(|dy| (-1i32..=1).map(move |dx| (dx, dy)))
-        .filter_map(|(dx, dy)| {
-            let nx = fx as i32 + dx;
-            let ny = fy as i32 + dy;
-            if board.in_bounds(nx, ny) {
-                Some(board.idx(nx as u16, ny as u16))
-            } else {
-                None
-            }
-        })
+    let neighbourhood: Vec<usize> = std::iter::once((fx, fy))
+        .chain(board.neighbours(fx, fy))
+        .map(|(nx, ny)| board.idx(nx, ny))
         .collect();
 
     // Fall back to a 1×1 safe zone when the 3×3 doesn't leave room for every mine.
@@ -60,7 +52,7 @@ pub(crate) fn generate_mines(
         }
 
         // Clear previous layout.
-        for cell in board.cells.iter_mut() {
+        for cell in &mut board.cells {
             cell.is_mine = false;
             cell.adjacent_mines = 0;
         }
@@ -83,10 +75,13 @@ pub(crate) fn compute_adjacency(board: &mut Board) {
             if board.get(x, y).is_mine {
                 continue;
             }
-            let count = board
-                .neighbours(x, y)
-                .filter(|&(nx, ny)| board.get(nx, ny).is_mine)
-                .count() as u8;
+            let count = u8::try_from(
+                board
+                    .neighbours(x, y)
+                    .filter(|&(nx, ny)| board.get(nx, ny).is_mine)
+                    .count(),
+            )
+            .expect("at most 8 neighbours");
             board.get_mut(x, y).adjacent_mines = count;
         }
     }
@@ -106,7 +101,7 @@ pub fn reveal(state: &mut GameState, x: u16, y: u16) -> Vec<(u16, u16)> {
     }
 
     if state.status == GameStatus::PreGame {
-        place_mines(&mut state.board, &state.config, (x, y));
+        place_mines(&mut state.board, state.config, (x, y));
         state.status = GameStatus::Playing;
     }
 
@@ -160,7 +155,7 @@ fn flood_fill(board: &mut Board, start_x: u16, start_y: u16) -> Vec<(u16, u16)> 
 
 /// On loss, reveal all mines (except correctly flagged ones).
 fn reveal_all_mines(board: &mut Board) {
-    for cell in board.cells.iter_mut() {
+    for cell in &mut board.cells {
         if cell.is_mine && cell.visibility != CellVisibility::Flagged {
             cell.visibility = CellVisibility::Revealed;
         }
@@ -216,7 +211,7 @@ pub fn chord_flag(state: &mut GameState, x: u16, y: u16) {
 
 /// Cycles the flag state of a non-revealed cell.
 /// Hidden → Flagged → Question → Hidden.
-/// Updates the flags_placed counter accordingly.
+/// Updates the `flags_placed` counter accordingly.
 pub fn cycle_flag(state: &mut GameState, x: u16, y: u16) -> bool {
     let cell = state.board.get(x, y);
     if cell.visibility == CellVisibility::Revealed {
@@ -254,7 +249,7 @@ fn check_win(state: &mut GameState) {
     if all_clear {
         // Auto-flag any unflagged mines.
         let mut auto_flags = 0u16;
-        for cell in state.board.cells.iter_mut() {
+        for cell in &mut state.board.cells {
             if cell.is_mine && cell.visibility != CellVisibility::Flagged {
                 cell.visibility = CellVisibility::Flagged;
                 auto_flags += 1;
@@ -270,9 +265,10 @@ fn check_win(state: &mut GameState) {
 // ---------------------------------------------------------------------------
 
 /// Moves the cursor by (dx, dy) in board space, clamping to board bounds.
+#[must_use]
 pub fn move_cursor(cursor: (u16, u16), dx: i16, dy: i16, config: &GameConfig) -> (u16, u16) {
-    let new_x = (cursor.0 as i16 + dx).clamp(0, config.width as i16 - 1) as u16;
-    let new_y = (cursor.1 as i16 + dy).clamp(0, config.height as i16 - 1) as u16;
+    let new_x = cursor.0.saturating_add_signed(dx).min(config.width - 1);
+    let new_y = cursor.1.saturating_add_signed(dy).min(config.height - 1);
     (new_x, new_y)
 }
 
@@ -285,18 +281,20 @@ use tachyonfx::{fx, Effect, Interpolation};
 /// Effect played when cells are revealed: cells coalesce (materialise from
 /// random scatter) over the cell area. Duration scales with cell count —
 /// a single cell is fast, a large flood fill gets more time to read.
+#[must_use]
 pub fn reveal_effect(cell_count: usize) -> Effect {
     const MIN_MS: u32 = 120;
     const MAX_MS: u32 = 550;
-    const SCALE_AT: usize = 40; // cell count at which duration reaches MAX_MS
-    let t = (cell_count as f32 / SCALE_AT as f32).min(1.0);
-    let duration = MIN_MS + ((MAX_MS - MIN_MS) as f32 * t) as u32;
+    const SCALE_AT: u32 = 40; // cell count at which duration reaches MAX_MS
+    let n = u32::try_from(cell_count).unwrap_or(u32::MAX).min(SCALE_AT);
+    let duration = MIN_MS + (MAX_MS - MIN_MS) * n / SCALE_AT;
     fx::coalesce((duration, Interpolation::QuadOut))
 }
 
 /// Effect played on mine detonation: red flash that fades out over the board.
-/// fx::fade_from(fg, bg, timer) starts from the given colours and fades back
+/// `fx::fade_from(fg`, bg, timer) starts from the given colours and fades back
 /// to the buffer's existing colours — a pure colour overlay, no content removed.
+#[must_use]
 pub fn detonate_effect() -> Effect {
     // Use RGB tuples — accepted by Into<Color> on both ratatui and ratatui_core.
     // Slam to white-on-red, then fade back to whatever the board was rendering.

@@ -20,8 +20,9 @@ pub const BORDER_ROW: u16 = 1;
 
 /// Returns (columns, rows) required to render a board of the given config,
 /// including surrounding box-drawing borders.
-/// Width  = width  * (CELL_WIDTH  + BORDER_COL) + BORDER_COL
-/// Height = height * (CELL_HEIGHT + BORDER_ROW) + BORDER_ROW
+/// Width  = width  * (`CELL_WIDTH`  + `BORDER_COL`) + `BORDER_COL`
+/// Height = height * (`CELL_HEIGHT` + `BORDER_ROW`) + `BORDER_ROW`
+#[must_use]
 pub fn board_render_size(config: &GameConfig) -> (u16, u16) {
     let w = config.width * (CELL_WIDTH + BORDER_COL) + BORDER_COL;
     let h = config.height * (CELL_HEIGHT + BORDER_ROW) + BORDER_ROW;
@@ -30,6 +31,7 @@ pub fn board_render_size(config: &GameConfig) -> (u16, u16) {
 
 /// Whether a board config fits within the given terminal dimensions.
 /// Accounts for the 3-row status bar above the board.
+#[must_use]
 pub fn fits_on_screen(config: &GameConfig, term_width: u16, term_height: u16) -> bool {
     let (w, h) = board_render_size(config);
     w <= term_width && h + 3 <= term_height
@@ -50,6 +52,7 @@ pub enum CellVisibility {
 impl CellVisibility {
     /// Cycles the flag state for a right-click: Hidden → Flagged → Question → Hidden.
     /// Has no effect on already-revealed cells.
+    #[must_use]
     pub fn cycle_flag(self) -> Self {
         match self {
             CellVisibility::Hidden => CellVisibility::Flagged,
@@ -59,6 +62,7 @@ impl CellVisibility {
         }
     }
 
+    #[must_use]
     pub fn is_hidden(self) -> bool {
         matches!(self, CellVisibility::Hidden | CellVisibility::Question)
     }
@@ -73,6 +77,7 @@ pub struct Cell {
 }
 
 impl Cell {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             visibility: CellVisibility::Hidden,
@@ -101,6 +106,7 @@ pub struct Board {
 }
 
 impl Board {
+    #[must_use]
     pub fn new(width: u16, height: u16) -> Self {
         Self {
             cells: vec![Cell::new(); (width * height) as usize],
@@ -109,10 +115,23 @@ impl Board {
         }
     }
 
+    #[must_use]
     pub fn idx(&self, x: u16, y: u16) -> usize {
         (y * self.width + x) as usize
     }
 
+    /// Inverse of `idx`: the (x, y) coordinates of a flat cell index.
+    ///
+    /// # Panics
+    /// Panics if `idx` is out of range for this board.
+    #[must_use]
+    pub fn coords(&self, idx: usize) -> (u16, u16) {
+        assert!(idx < self.cells.len(), "cell index out of range");
+        let i = u16::try_from(idx).expect("board has at most u16::MAX cells");
+        (i % self.width, i / self.width)
+    }
+
+    #[must_use]
     pub fn get(&self, x: u16, y: u16) -> &Cell {
         &self.cells[self.idx(x, y)]
     }
@@ -122,23 +141,18 @@ impl Board {
         &mut self.cells[i]
     }
 
+    #[must_use]
     pub fn in_bounds(&self, x: i32, y: i32) -> bool {
-        x >= 0 && y >= 0 && x < self.width as i32 && y < self.height as i32
+        x >= 0 && y >= 0 && x < i32::from(self.width) && y < i32::from(self.height)
     }
 
     /// Returns the coordinates of all valid neighbours of (x, y).
     pub fn neighbours(&self, x: u16, y: u16) -> impl Iterator<Item = (u16, u16)> {
-        let (w, h) = (self.width as i32, self.height as i32);
-        let (cx, cy) = (x as i32, y as i32);
         let mut result = Vec::with_capacity(8);
-        for dy in -1..=1i32 {
-            for dx in -1..=1i32 {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let (nx, ny) = (cx + dx, cy + dy);
-                if nx >= 0 && ny >= 0 && nx < w && ny < h {
-                    result.push((nx as u16, ny as u16));
+        for ny in y.saturating_sub(1)..=(y + 1).min(self.height - 1) {
+            for nx in x.saturating_sub(1)..=(x + 1).min(self.width - 1) {
+                if (nx, ny) != (x, y) {
+                    result.push((nx, ny));
                 }
             }
         }
@@ -158,6 +172,7 @@ pub enum Difficulty {
 }
 
 impl Difficulty {
+    #[must_use]
     pub fn config(self) -> GameConfig {
         match self {
             Difficulty::Beginner => GameConfig {
@@ -178,6 +193,7 @@ impl Difficulty {
         }
     }
 
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Difficulty::Beginner => "Beginner",
@@ -228,6 +244,7 @@ pub struct GameState {
 }
 
 impl GameState {
+    #[must_use]
     pub fn new(difficulty: Difficulty) -> Self {
         let config = difficulty.config();
         Self {
@@ -241,10 +258,12 @@ impl GameState {
         }
     }
 
+    #[must_use]
     pub fn remaining_mines(&self) -> i32 {
-        self.config.mine_count as i32 - self.flags_placed as i32
+        i32::from(self.config.mine_count) - i32::from(self.flags_placed)
     }
 
+    #[must_use]
     pub fn is_active(&self) -> bool {
         matches!(self.status, GameStatus::PreGame | GameStatus::Playing)
     }
@@ -310,11 +329,11 @@ pub struct Leaderboard {
 impl Leaderboard {
     pub const MAX_ENTRIES: usize = 10;
 
+    #[must_use]
     pub fn get(&self, difficulty: Difficulty) -> &[ScoreEntry] {
         self.entries
             .get(&difficulty)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], std::vec::Vec::as_slice)
     }
 }
 
@@ -349,6 +368,7 @@ pub enum LeaderboardTab {
 }
 
 impl LeaderboardTab {
+    #[must_use]
     pub fn difficulty(self) -> Difficulty {
         match self {
             LeaderboardTab::Beginner => Difficulty::Beginner,
@@ -357,6 +377,7 @@ impl LeaderboardTab {
         }
     }
 
+    #[must_use]
     pub fn next(self) -> Self {
         match self {
             LeaderboardTab::Beginner => LeaderboardTab::Intermediate,
@@ -365,6 +386,7 @@ impl LeaderboardTab {
         }
     }
 
+    #[must_use]
     pub fn prev(self) -> Self {
         match self {
             LeaderboardTab::Beginner => LeaderboardTab::Expert,
@@ -406,12 +428,12 @@ pub struct App {
     /// False on game start; set true by any keyboard or mouse move on the board.
     pub cell_active: bool,
     /// Whether the mouse is currently controlling the active cell.
-    /// When true, mouse moves update active_cell. When false (keyboard took over),
+    /// When true, mouse moves update `active_cell`. When false (keyboard took over),
     /// mouse moves only resume control once the mouse actually moves again.
     pub mouse_controlling: bool,
     /// Hovered UI element on menu/leaderboard screens. None when mouse is elsewhere.
     pub ui_hover: Option<UiHover>,
-    /// Active effects with their target rects. Processed each frame in draw().
+    /// Active effects with their target rects. Processed each frame in `draw()`.
     pub effects: Vec<(Effect, Rect)>,
     /// Timestamp of the last rendered frame, used to compute elapsed for effects.
     pub last_frame: Instant,
@@ -419,6 +441,7 @@ pub struct App {
 }
 
 impl App {
+    #[must_use]
     pub fn new(leaderboard: Leaderboard) -> Self {
         Self {
             screen: Screen::MainMenu { selected: 0 },

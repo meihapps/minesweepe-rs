@@ -59,8 +59,7 @@ fn flood_fill(board: &Board, start: usize, revealed: &mut [bool]) {
         }
         revealed[idx] = true;
         if board.cells[idx].adjacent_mines == 0 {
-            let x = (idx as u16) % board.width;
-            let y = (idx as u16) / board.width;
+            let (x, y) = board.coords(idx);
             for (nx, ny) in board.neighbours(x, y) {
                 let ni = board.idx(nx, ny);
                 if !revealed[ni] {
@@ -197,7 +196,7 @@ fn analyse_components(constraints: &[Constraint]) -> Vec<ComponentAnalysis> {
 }
 
 /// `k_min`/`k_max` act as a global mine-count constraint over the whole assignment:
-/// treat them as a virtual constraint "total mines in all cells = [k_min, k_max]".
+/// treat them as a virtual constraint "total mines in all cells = [`k_min`, `k_max`]".
 fn backtrack(
     constraints: &[(Vec<usize>, usize)],
     assignment: &mut Vec<bool>,
@@ -219,7 +218,7 @@ fn backtrack(
     for (cells, count) in constraints {
         let (mines, unknowns) = cells.iter().fold((0usize, 0usize), |(m, u), &li| {
             if li < pos {
-                (m + assignment[li] as usize, u)
+                (m + usize::from(assignment[li]), u)
             } else {
                 (m, u + 1)
             }
@@ -245,7 +244,7 @@ fn backtrack(
             constraints,
             assignment,
             pos + 1,
-            mines_so_far + mine as usize,
+            mines_so_far + usize::from(mine),
             k_min,
             k_max,
             valid,
@@ -259,7 +258,7 @@ fn backtrack(
 /// that no selected constraint touches are free and don't affect forcing.
 /// Returns `None` if the target isn't in the active frontier or no configs exist.
 /// Builds the active frontier from the selected constraints, runs backtrack with
-/// the given mine-count bounds (k_min=0, k_max=usize::MAX for local/unconstrained;
+/// the given mine-count bounds (`k_min=0`, `k_max=usize::MAX` for local/unconstrained;
 /// tighter bounds encode the global mine-count constraint).
 fn make_local_constraints(
     included: &[usize],
@@ -321,8 +320,7 @@ fn eval_combo(
                 configs.iter().all(|(cfg, _)| !cfg[tl])
             };
             if is_forced {
-                let x = (bi as u16) % board.width;
-                let y = (bi as u16) / board.width;
+                let (x, y) = board.coords(bi);
                 if is_mine {
                     mine_cells.push((x, y));
                 } else {
@@ -338,10 +336,7 @@ fn eval_combo(
 
     let witnesses: Vec<(u16, u16)> = included
         .iter()
-        .map(|&ci| {
-            let wi = constraints[ci].witness;
-            ((wi as u16) % board.width, (wi as u16) / board.width)
-        })
+        .map(|&ci| board.coords(constraints[ci].witness))
         .collect();
 
     Some(Deduction {
@@ -451,7 +446,7 @@ fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
     }
 }
 
-/// Sweeps k-combinations of constraint indices (size 1..=max_size) to find the
+/// Sweeps k-combinations of constraint indices (size `1..=max_size`) to find the
 /// smallest witness subset that forces any cell in `forced`. Returns the best
 /// `Deduction` found at the first size tier that produces any result, or `None`.
 ///
@@ -465,14 +460,14 @@ fn min_witness_subset(
     max_size: usize,
     first_only: bool,
 ) -> Option<Deduction> {
+    const PAR_THRESHOLD: usize = 32;
+
     let n = constraint_indices.len();
 
     let eval = |combo: &Vec<usize>| -> Option<Deduction> {
         let included: Vec<usize> = combo.iter().map(|&i| constraint_indices[i]).collect();
         eval_combo(&included, forced, constraints, board)
     };
-
-    const PAR_THRESHOLD: usize = 32;
 
     for size in 1..=max_size.min(n) {
         let combos = combinations(n, size);
@@ -509,8 +504,9 @@ fn min_witness_subset(
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
+#[must_use]
 pub fn solve(board: &Board, first_click: (u16, u16)) -> SolveResult {
-    let total_mines = board.cells.iter().filter(|c| c.is_mine).count() as u16;
+    let total_mines: u16 = board.cells.iter().map(|c| u16::from(c.is_mine)).sum();
     let n = board.cells.len();
     let mut revealed = vec![false; n];
     let mut flagged = vec![false; n];
@@ -549,6 +545,7 @@ pub fn solve(board: &Board, first_click: (u16, u16)) -> SolveResult {
     }
 }
 
+#[must_use]
 pub fn hint(
     board: &Board,
     revealed: &[bool],
@@ -598,6 +595,10 @@ fn debug_check_deduction(board: &Board, flagged: &[bool], d: &Deduction) {
 ///                     global mine count then forces the uncovered passive region.
 ///
 /// `first_only`: return immediately on the first deduction found (solve path).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one block per phase; splitting obscures the flow"
+)]
 fn hint_inner(
     board: &Board,
     revealed: &[bool],
@@ -617,16 +618,14 @@ fn hint_inner(
             if !all_mine && !all_safe {
                 continue;
             }
-            let wx = (c.witness as u16) % board.width;
-            let wy = (c.witness as u16) / board.width;
+            let (wx, wy) = board.coords(c.witness);
             let mut mine_cells = Vec::new();
             let mut safe_cells = Vec::new();
             for &bi in &c.cells {
                 if revealed[bi] || flagged[bi] {
                     continue;
                 }
-                let x = (bi as u16) % board.width;
-                let y = (bi as u16) / board.width;
+                let (x, y) = board.coords(bi);
                 if all_mine {
                     mine_cells.push((x, y));
                 } else {
@@ -736,16 +735,10 @@ fn hint_inner(
         let passive_mines = remaining - covered_mines;
 
         let (mine_cells, safe_cells) = if passive_mines == 0 {
-            let safe = passive
-                .iter()
-                .map(|&bi| ((bi as u16) % board.width, (bi as u16) / board.width))
-                .collect();
+            let safe = passive.iter().map(|&bi| board.coords(bi)).collect();
             (vec![], safe)
         } else if passive_mines == passive.len() {
-            let mines = passive
-                .iter()
-                .map(|&bi| ((bi as u16) % board.width, (bi as u16) / board.width))
-                .collect();
+            let mines = passive.iter().map(|&bi| board.coords(bi)).collect();
             (mines, vec![])
         } else {
             return None;
@@ -753,10 +746,7 @@ fn hint_inner(
 
         let witnesses: Vec<(u16, u16)> = selected
             .iter()
-            .map(|&ci| {
-                let wi = constraints[ci].witness;
-                ((wi as u16) % board.width, (wi as u16) / board.width)
-            })
+            .map(|&ci| board.coords(constraints[ci].witness))
             .collect();
 
         Some(Deduction {
@@ -781,7 +771,7 @@ mod tests {
         let start = std::time::Instant::now();
         for _ in 0..n {
             let mut board = Board::new(config.width, config.height);
-            place_mines(&mut board, &config, first_click);
+            place_mines(&mut board, config, first_click);
             if solve(&board, first_click) == SolveResult::Solved {
                 solved += 1;
             }
@@ -814,7 +804,7 @@ mod tests {
     ///
     /// Slow, so ignored by default:  cargo test --release -- --ignored
     #[test]
-    #[ignore]
+    #[ignore = "slow; run with --release"]
     fn generated_boards_clear_without_guessing() {
         use rand::Rng;
 
@@ -835,7 +825,7 @@ mod tests {
             );
 
             let mut board = Board::new(config.width, config.height);
-            place_mines(&mut board, &config, first_click);
+            place_mines(&mut board, config, first_click);
 
             let mines: Vec<usize> = (0..board.cells.len())
                 .filter(|&i| board.cells[i].is_mine)

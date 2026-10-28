@@ -17,15 +17,14 @@ fn save_path() -> Option<std::path::PathBuf> {
 /// Loads the leaderboard from disk. Returns an empty leaderboard on any error
 /// (missing file, corrupt JSON, etc.) rather than propagating — a missing
 /// leaderboard is not a fatal condition.
+#[must_use]
 pub fn load() -> Leaderboard {
-    let path = match save_path() {
-        Some(p) => p,
-        None => return Leaderboard::default(),
+    let Some(path) = save_path() else {
+        return Leaderboard::default();
     };
 
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(_) => return Leaderboard::default(),
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Leaderboard::default();
     };
 
     serde_json::from_slice(&bytes).unwrap_or_default()
@@ -34,9 +33,8 @@ pub fn load() -> Leaderboard {
 /// Saves the leaderboard to disk. Errors are silently ignored — a failed
 /// save shouldn't crash the game.
 pub fn save(leaderboard: &Leaderboard) {
-    let path = match save_path() {
-        Some(p) => p,
-        None => return,
+    let Some(path) = save_path() else {
+        return;
     };
 
     // Ensure the parent directory exists.
@@ -78,6 +76,7 @@ pub fn submit(leaderboard: &mut Leaderboard, difficulty: Difficulty, time: Durat
 }
 
 /// Returns whether a given time would qualify for the leaderboard.
+#[must_use]
 pub fn qualifies(leaderboard: &Leaderboard, difficulty: Difficulty, time: Duration) -> bool {
     let entries = leaderboard.get(difficulty);
     entries.len() < Leaderboard::MAX_ENTRIES || entries.last().is_none_or(|e| time < e.time)

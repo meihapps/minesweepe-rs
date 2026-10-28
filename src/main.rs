@@ -42,10 +42,10 @@ fn run(terminal: &mut tui::Tui, app: &mut App, pregen: &PregenHandle) -> anyhow:
         tui::draw(terminal, app)?;
 
         // Use faster tick while effects are running for smooth animation.
-        let tick = if !app.effects.is_empty() {
-            EFFECT_TICK
-        } else {
+        let tick = if app.effects.is_empty() {
             TICK_RATE
+        } else {
+            EFFECT_TICK
         };
         let timeout = tick.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
@@ -151,7 +151,7 @@ fn handle_event(app: &mut App, event: &Event, pregen: &PregenHandle) {
     dispatch(app, ev.action, ev.board_pos, pregen);
 }
 
-/// Submits a pregen job for `pos` when the game is in PreGame state.
+/// Submits a pregen job for `pos` when the game is in `PreGame` state.
 fn maybe_submit_pregen(app: &App, pregen: &PregenHandle, pos: (u16, u16)) {
     if matches!(app.screen, Screen::Playing) {
         if let Some(game) = &app.game {

@@ -23,5 +23,8 @@ rand = "0.8"
 rayon = "1"
 tachyonfx = { version = "0.25", features = ["std-duration"] }
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
 [profile.release]
 debug = true

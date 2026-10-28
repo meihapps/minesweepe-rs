@@ -15,8 +15,8 @@ use ratatui::Terminal;
 use std::io::{self, Stdout};
 
 use crate::types::{
-    App, CellVisibility, GameAction, GameEvent, GameStatus, HintState, LeaderboardTab, Screen,
-    UiHover, BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
+    App, CellVisibility, GameAction, GameConfig, GameEvent, GameStatus, HintState, LeaderboardTab,
+    Screen, UiHover, BORDER_COL, BORDER_ROW, CELL_HEIGHT, CELL_WIDTH,
 };
 
 // ---------------------------------------------------------------------------
@@ -25,6 +25,8 @@ use crate::types::{
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
+/// # Errors
+/// Returns any I/O error raised by the terminal.
 pub fn init() -> io::Result<Tui> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
@@ -32,6 +34,8 @@ pub fn init() -> io::Result<Tui> {
     Terminal::new(backend)
 }
 
+/// # Errors
+/// Returns any I/O error raised by the terminal.
 pub fn restore(terminal: &mut Tui) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(
@@ -47,13 +51,15 @@ pub fn restore(terminal: &mut Tui) -> io::Result<()> {
 // Main render dispatch
 // ---------------------------------------------------------------------------
 
+/// # Errors
+/// Returns any I/O error raised by the terminal.
 pub fn draw(terminal: &mut Tui, app: &mut App) -> io::Result<()> {
     terminal.draw(|frame| {
         let area = frame.area();
         match &app.screen {
             Screen::MainMenu { selected } => draw_main_menu(frame, area, *selected),
             Screen::NewGameMenu { selected } => {
-                draw_new_game_menu(frame, area, *selected, app.ui_hover)
+                draw_new_game_menu(frame, area, *selected, app.ui_hover);
             }
             Screen::Playing => {
                 if let Some(game) = &app.game {
@@ -115,14 +121,14 @@ fn draw_main_menu(frame: &mut ratatui::Frame, area: Rect, selected: usize) {
     for (i, item) in MAIN_MENU_ITEMS.iter().enumerate() {
         if i == selected {
             text.push(Line::from(Span::styled(
-                format!(" ▶ {} ", item),
+                format!(" ▶ {item} "),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )));
         } else {
             text.push(Line::from(Span::styled(
-                format!("   {} ", item),
+                format!("   {item} "),
                 Style::default().fg(Color::White),
             )));
         }
@@ -168,20 +174,17 @@ fn draw_new_game_menu(
             if i == selected {
                 Line::from(vec![
                     Span::styled(
-                        format!(" ▶ {:<14}", name),
+                        format!(" ▶ {name:<14}"),
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(format!("({})", desc), Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("({desc})"), Style::default().fg(Color::Yellow)),
                 ])
             } else {
                 Line::from(vec![
-                    Span::styled(
-                        format!("   {:<14}", name),
-                        Style::default().fg(Color::White),
-                    ),
-                    Span::styled(format!("({})", desc), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("   {name:<14}"), Style::default().fg(Color::White)),
+                    Span::styled(format!("({desc})"), Style::default().fg(Color::DarkGray)),
                 ])
             }
         })
@@ -237,7 +240,7 @@ fn draw_game(
         };
         let header_line = Line::from(vec![
             Span::styled(
-                format!("  {}  ", result_text),
+                format!("  {result_text}  "),
                 Style::default()
                     .fg(result_color)
                     .add_modifier(Modifier::BOLD),
@@ -282,10 +285,8 @@ fn draw_game(
                 } else {
                     vec![]
                 };
-                sep.into_iter().chain(std::iter::once(Span::styled(
-                    format!("[ {} ]", item),
-                    style,
-                )))
+                sep.into_iter()
+                    .chain(std::iter::once(Span::styled(format!("[ {item} ]"), style)))
             })
             .collect();
         let footer = Paragraph::new(Line::from(items))
@@ -330,7 +331,7 @@ fn draw_status_bar(
 
     let text = Line::from(vec![
         Span::styled("  💣 ", Style::default()),
-        Span::styled(format!("{:03}", mines_left), counter_style),
+        Span::styled(format!("{mines_left:03}"), counter_style),
         Span::raw("          "),
         Span::styled(
             format!("{:02}:{:02}", secs / 60, secs % 60),
@@ -380,6 +381,17 @@ fn draw_hint_footer(frame: &mut ratatui::Frame, area: Rect, hint: Option<&HintSt
     frame.render_widget(para, area);
 }
 
+/// Board-cell coordinates for signed (x, y), or `None` if outside the board.
+fn board_cell(config: GameConfig, cx: i32, cy: i32) -> Option<(u16, u16)> {
+    let x = u16::try_from(cx).ok().filter(|&x| x < config.width)?;
+    let y = u16::try_from(cy).ok().filter(|&y| y < config.height)?;
+    Some((x, y))
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "single pass over terminal rows; the closures share local state"
+)]
 fn draw_board(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -388,6 +400,8 @@ fn draw_board(
     cell_active: bool,
     hint: Option<&HintState>,
 ) {
+    use std::collections::HashSet as CellSet;
+
     let board = &game.board;
     let config = &game.config;
     let detonated = match &game.status {
@@ -396,7 +410,6 @@ fn draw_board(
     };
 
     // Pre-compute hint cell sets for O(1) lookup per cell.
-    use std::collections::HashSet as CellSet;
     let hint_mine_targets: CellSet<(u16, u16)> = hint
         .map(|h| h.mine_targets.iter().copied().collect())
         .unwrap_or_default();
@@ -431,25 +444,24 @@ fn draw_board(
 
     // Returns true if this in-bounds cell should dissolve into empty space.
     // Out-of-bounds coordinates (outside the board) are never zero.
-    let is_zero = |cx: i32, cy: i32| -> bool {
-        if cx < 0 || cy < 0 || cx >= config.width as i32 || cy >= config.height as i32 {
-            return false;
-        }
-        let c = board.get(cx as u16, cy as u16);
+    let is_zero_at = |x: u16, y: u16| -> bool {
+        let c = board.get(x, y);
         c.visibility == CellVisibility::Revealed && !c.is_mine && c.adjacent_mines == 0
+    };
+    let is_zero = |cx: i32, cy: i32| -> bool {
+        board_cell(*config, cx, cy).is_some_and(|(x, y)| is_zero_at(x, y))
     };
 
     // Precompute exposure: a revealed non-mine cell is exposed if it can reach a zero
     // cell through orthogonal connections of revealed cells. Flood-fill from all zeros.
-    let w = config.width as usize;
-    let h = config.height as usize;
-    let mut exposed = vec![false; w * h];
+    let (w, h) = (config.width, config.height);
+    let mut exposed = vec![false; board.cells.len()];
 
     // Seed: all zero cells are exposed.
     for cy in 0..h {
         for cx in 0..w {
-            if is_zero(cx as i32, cy as i32) {
-                exposed[cy * w + cx] = true;
+            if is_zero_at(cx, cy) {
+                exposed[board.idx(cx, cy)] = true;
             }
         }
     }
@@ -461,10 +473,10 @@ fn draw_board(
         changed = false;
         for cy in 0..h {
             for cx in 0..w {
-                if exposed[cy * w + cx] {
+                if exposed[board.idx(cx, cy)] {
                     continue;
                 }
-                let c = board.get(cx as u16, cy as u16);
+                let c = board.get(cx, cy);
                 if c.visibility != CellVisibility::Revealed || c.is_mine {
                     continue;
                 }
@@ -476,8 +488,8 @@ fn draw_board(
                     (cx, cy + 1),
                 ];
                 for (nx, ny) in neighbours {
-                    if nx < w && ny < h && exposed[ny * w + nx] {
-                        exposed[cy * w + cx] = true;
+                    if nx < w && ny < h && exposed[board.idx(nx, ny)] {
+                        exposed[board.idx(cx, cy)] = true;
                         changed = true;
                         break;
                     }
@@ -487,10 +499,7 @@ fn draw_board(
     }
 
     let is_exposed = |cx: i32, cy: i32| -> bool {
-        if cx < 0 || cy < 0 || cx >= config.width as i32 || cy >= config.height as i32 {
-            return false;
-        }
-        exposed[cy as usize * w + cx as usize]
+        board_cell(*config, cx, cy).is_some_and(|(x, y)| exposed[board.idx(x, y)])
     };
 
     // A segment is suppressed when either adjacent cell is zero OR both adjacent
@@ -517,7 +526,8 @@ fn draw_board(
 
     for term_row in 0..board_h {
         let is_border_row = term_row % stride_h == 0;
-        let cy = (term_row / stride_h) as i32;
+        let y = term_row / stride_h;
+        let cy = i32::from(y);
 
         let mut spans: Vec<Span> = Vec::with_capacity((board_w * 2) as usize);
 
@@ -527,9 +537,9 @@ fn draw_board(
             let cy_above = cy - 1;
             let cy_below = cy;
 
-            for cx in 0..=config.width as i32 {
+            for cx in 0..=i32::from(config.width) {
                 let is_lft = cx == 0;
-                let is_rgt = cx == config.width as i32;
+                let is_rgt = cx == i32::from(config.width);
 
                 let arm_w = !is_lft && h_seg_active(cx - 1, cy_above, cy_below, is_top, is_bot);
                 let arm_e = !is_rgt && h_seg_active(cx, cy_above, cy_below, is_top, is_bot);
@@ -571,7 +581,8 @@ fn draw_board(
             }
         } else {
             // Content row: vertical borders between cells.
-            for cx in 0..config.width as i32 {
+            for x in 0..config.width {
+                let cx = i32::from(x);
                 let is_lft = cx == 0;
                 if v_seg_active(cx - 1, cx, cy, is_lft, false) {
                     spans.push(Span::styled("│", border_style));
@@ -579,15 +590,14 @@ fn draw_board(
                     spans.push(Span::styled(" ", blank_style));
                 }
 
-                let cell = board.get(cx as u16, cy as u16);
-                let pos = (cx as u16, cy as u16);
+                let cell = board.get(x, y);
+                let pos = (x, y);
                 let active = cell_active && pos == active_cell;
                 let highlight = CellHighlight {
                     active,
                     neighbour: !active
-                        && neighbour_zone.is_some_and(|(zx, zy)| {
-                            (cx as u16).abs_diff(zx) <= 1 && (cy as u16).abs_diff(zy) <= 1
-                        }),
+                        && neighbour_zone
+                            .is_some_and(|(zx, zy)| x.abs_diff(zx) <= 1 && y.abs_diff(zy) <= 1),
                     detonated: detonated == Some(pos),
                     wrong_flag: detonated.is_some()
                         && cell.visibility == CellVisibility::Flagged
@@ -596,7 +606,7 @@ fn draw_board(
                     hint_safe_target: hint_safe_targets.contains(&pos),
                     hint_witness: hint_witnesses.contains(&pos),
                 };
-                spans.push(cell_span(cell, highlight));
+                spans.push(cell_span(*cell, highlight));
             }
             // Right perimeter border — always drawn.
             spans.push(Span::styled("│", border_style));
@@ -613,6 +623,10 @@ fn draw_board(
 }
 
 /// Per-cell highlight flags passed from `draw_board` to `cell_span`.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags, not a state machine"
+)]
 #[derive(Clone, Copy)]
 struct CellHighlight {
     active: bool,
@@ -627,7 +641,7 @@ struct CellHighlight {
 /// Each cell is rendered as a single fullwidth Unicode character string.
 /// Fullwidth chars occupy exactly 2 terminal columns, giving square cells on
 /// any terminal regardless of font aspect ratio.
-fn cell_span<'a>(cell: &crate::types::Cell, highlight: CellHighlight) -> Span<'a> {
+fn cell_span<'a>(cell: crate::types::Cell, highlight: CellHighlight) -> Span<'a> {
     // Fullwidth characters: each is a 2-column glyph.
     // Numbers use fullwidth digits; other states use block/emoji chars.
     // Base symbol and colours by cell state.
@@ -704,6 +718,7 @@ pub const GAME_OVER_ITEMS: &[&str] = &["New Game", "Main Menu", "Quit"];
 /// Returns the terminal Rects for the three game-over footer items.
 /// Items are on a single row in the last 3 rows of the screen:
 /// "[ New Game ]  |  [ Main Menu ]  |  [ Quit ]" centered.
+#[must_use]
 pub fn game_over_item_rects(term_size: (u16, u16)) -> [Rect; 3] {
     // Full string: "[ New Game ]  |  [ Main Menu ]  |  [ Quit ]" = 43 chars
     // Item starts and widths within the string:
@@ -718,7 +733,8 @@ pub fn game_over_item_rects(term_size: (u16, u16)) -> [Rect; 3] {
 }
 
 /// Returns the popup Rect and the row of the first main menu item.
-/// Layout: border + title_line + "" = 2 lines before items.
+/// Layout: border + `title_line` + "" = 2 lines before items.
+#[must_use]
 pub fn main_menu_item_rows(area: Rect) -> (u16, Rect) {
     let popup = centered_rect(40, 50, area);
     let first_item_row = popup.y + 1 + 2; // border + title + blank
@@ -727,6 +743,7 @@ pub fn main_menu_item_rows(area: Rect) -> (u16, Rect) {
 
 /// Returns the popup Rect and the row of the first new-game menu item.
 /// Layout: border = 1 line before items (no title line or blank).
+#[must_use]
 pub fn new_game_menu_item_rows(area: Rect) -> (u16, Rect) {
     let popup = centered_rect(50, 60, area);
     let first_item_row = popup.y + 1; // border only
@@ -734,7 +751,8 @@ pub fn new_game_menu_item_rows(area: Rect) -> (u16, Rect) {
 }
 
 /// Returns the full-width Rect for the leaderboard tab bar and the exact column
-/// ranges for each tab label, computed to match draw_leaderboard's centered layout.
+/// ranges for each tab label, computed to match `draw_leaderboard`'s centered layout.
+#[must_use]
 pub fn leaderboard_tab_rects(term_size: (u16, u16)) -> (Rect, [Rect; 3]) {
     // The tab line is "Beginner | Intermediate | Expert" centered in the inner block.
     // Label starts within the string: Beginner=0, Intermediate=11, Expert=26.
@@ -757,6 +775,7 @@ pub fn leaderboard_tab_rects(term_size: (u16, u16)) -> (Rect, [Rect; 3]) {
 /// Returns the exact Rect for the clickable [ Back ] button in the leaderboard footer.
 /// The footer line is "[ ← / → ] Switch tab    [ Back ]" (32 display cols), centered.
 /// [ Back ] starts at char index 24, width 8.
+#[must_use]
 pub fn leaderboard_back_rect(term_size: (u16, u16)) -> Rect {
     const FULL_LEN: u16 = 32;
     const BACK_START: u16 = 24;
@@ -905,8 +924,9 @@ fn tab_span(label: &'static str, active: bool, hovered: bool) -> Span<'static> {
 // Input translation
 // ---------------------------------------------------------------------------
 
-/// Translates a raw crossterm Event into an optional GameEvent, bundling the
+/// Translates a raw crossterm Event into an optional `GameEvent`, bundling the
 /// logical action with the board-space coordinate for mouse events.
+#[must_use]
 pub fn translate_event(
     event: &Event,
     board_origin: (u16, u16),
@@ -920,6 +940,7 @@ pub fn translate_event(
             board_pos: None,
         }),
         Event::Mouse(mouse) => {
+            let mouse = *mouse;
             // For the game-over overlay, intercept clicks on the menu items
             // before they reach the board underneath.
             if let Screen::GameOver { .. } = screen {
@@ -947,12 +968,13 @@ pub fn translate_event(
 
 /// Hit-tests mouse events against the main menu items.
 fn translate_main_menu_click(
-    mouse: &crossterm::event::MouseEvent,
+    mouse: crossterm::event::MouseEvent,
     term_size: (u16, u16),
 ) -> Option<GameEvent> {
     let area = Rect::new(0, 0, term_size.0, term_size.1);
     let (first_row, popup) = main_menu_item_rows(area);
-    let last_row = first_row + MAIN_MENU_ITEMS.len() as u16 - 1;
+    let last_row =
+        first_row + u16::try_from(MAIN_MENU_ITEMS.len()).expect("menu fits on screen") - 1;
 
     if mouse.column < popup.x || mouse.column >= popup.x + popup.width {
         return None;
@@ -987,12 +1009,13 @@ fn translate_main_menu_click(
 
 /// Hit-tests mouse events against the new game menu items and [ Back ] button.
 fn translate_new_game_menu_click(
-    mouse: &crossterm::event::MouseEvent,
+    mouse: crossterm::event::MouseEvent,
     term_size: (u16, u16),
 ) -> Option<GameEvent> {
     let area = Rect::new(0, 0, term_size.0, term_size.1);
     let (first_row, popup) = new_game_menu_item_rows(area);
-    let last_row = first_row + NEW_GAME_ITEMS.len() as u16 - 1;
+    let last_row =
+        first_row + u16::try_from(NEW_GAME_ITEMS.len()).expect("menu fits on screen") - 1;
     // Hint line: border(1) + 3 items + blank = row 5 inside popup → popup.y + 5
     // "[ Back ]" starts at char 19 inside the line → popup.x + 1 + 19
     let back_row = popup.y + 5;
@@ -1048,7 +1071,7 @@ fn translate_new_game_menu_click(
 
 /// Hit-tests mouse events against the leaderboard tabs and footer.
 fn translate_leaderboard_click(
-    mouse: &crossterm::event::MouseEvent,
+    mouse: crossterm::event::MouseEvent,
     term_size: (u16, u16),
 ) -> Option<GameEvent> {
     let (tab_bar, tab_rects) = leaderboard_tab_rects(term_size);
@@ -1103,7 +1126,7 @@ fn translate_leaderboard_click(
 /// Hit-tests mouse events against the game-over footer items.
 /// Items are on a single row in the footer bar at the bottom of the screen.
 fn translate_game_over_click(
-    mouse: &crossterm::event::MouseEvent,
+    mouse: crossterm::event::MouseEvent,
     term_size: (u16, u16),
 ) -> Option<GameEvent> {
     let rects = game_over_item_rects(term_size);
@@ -1147,16 +1170,15 @@ fn translate_key(key: &crossterm::event::KeyEvent, _screen: &Screen) -> Option<G
     }
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Char('Q') => Some(GameAction::Quit),
+        KeyCode::Char('q' | 'Q') => Some(GameAction::Quit),
         KeyCode::Esc => Some(GameAction::OpenMenu),
         KeyCode::Enter | KeyCode::Char(' ') => Some(GameAction::Reveal),
-        KeyCode::Char('f') | KeyCode::Char('F') => Some(GameAction::CycleFlag),
+        KeyCode::Char('f' | 'F') => Some(GameAction::CycleFlag),
         KeyCode::Char('?') => Some(GameAction::Hint),
         KeyCode::Up | KeyCode::Char('k') => Some(GameAction::MoveCursor(0, -1)),
-        KeyCode::Down | KeyCode::Char('j') => Some(GameAction::MoveCursor(0, 1)),
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => Some(GameAction::MoveCursor(0, 1)),
         KeyCode::Left | KeyCode::Char('h') => Some(GameAction::MoveCursor(-1, 0)),
         KeyCode::Right | KeyCode::Char('l') => Some(GameAction::MoveCursor(1, 0)),
-        KeyCode::Tab => Some(GameAction::MoveCursor(0, 1)),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             Some(GameAction::Quit)
         }
@@ -1165,7 +1187,7 @@ fn translate_key(key: &crossterm::event::KeyEvent, _screen: &Screen) -> Option<G
 }
 
 fn translate_mouse(
-    mouse: &crossterm::event::MouseEvent,
+    mouse: crossterm::event::MouseEvent,
     board_origin: (u16, u16),
     board_size: (u16, u16),
 ) -> Option<GameEvent> {
@@ -1200,12 +1222,14 @@ fn translate_mouse(
 /// translation.
 /// Computes the terminal Rect covering the entire rendered board (excluding status bar).
 /// Used to scope tachyonfx effects to the board area.
+#[must_use]
 pub fn board_rect(term_width: u16, term_height: u16, config: &crate::types::GameConfig) -> Rect {
     let origin = board_origin(term_width, term_height, config);
     let (w, h) = crate::types::board_render_size(config);
     Rect::new(origin.0, origin.1, w, h)
 }
 
+#[must_use]
 pub fn board_origin(
     term_width: u16,
     term_height: u16,
@@ -1224,6 +1248,7 @@ pub fn board_origin(
 // ---------------------------------------------------------------------------
 
 /// Returns a centered Rect of the given percentage dimensions within `area`.
+#[must_use]
 pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vert = Layout::default()
         .direction(Direction::Vertical)

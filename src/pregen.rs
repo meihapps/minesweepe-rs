@@ -41,6 +41,9 @@ pub struct PregenHandle {
 // No `Default`: `new()` spawns a worker thread, which `Default` would hide.
 #[allow(clippy::new_without_default)]
 impl PregenHandle {
+    /// # Panics
+    /// Panics if the worker thread cannot be spawned.
+    #[must_use]
     pub fn new() -> Self {
         let shared = Arc::new(Shared {
             job: Mutex::new(None),
@@ -51,12 +54,15 @@ impl PregenHandle {
         let worker_shared = shared.clone();
         std::thread::Builder::new()
             .name("pregen-worker".into())
-            .spawn(move || worker(worker_shared))
+            .spawn(move || worker(&worker_shared))
             .expect("failed to spawn pregen worker");
         PregenHandle { shared }
     }
 
     /// Submit a new generation job for `first_click`. Cancels any in-progress job.
+    ///
+    /// # Panics
+    /// Panics if the worker thread panicked while holding a lock.
     pub fn submit(&self, first_click: (u16, u16), config: GameConfig) {
         let gen = self.shared.generation.fetch_add(1, Ordering::Release) + 1;
         *self.shared.result.lock().unwrap() = None;
@@ -70,6 +76,10 @@ impl PregenHandle {
 
     /// Returns the ready board if it was generated for `first_click` and is still current.
     /// Takes ownership of the result, clearing it.
+    ///
+    /// # Panics
+    /// Panics if the worker thread panicked while holding a lock.
+    #[must_use]
     pub fn take(&self, first_click: (u16, u16)) -> Option<Board> {
         let current_gen = self.shared.generation.load(Ordering::Acquire);
         let mut slot = self.shared.result.lock().unwrap();
@@ -86,7 +96,7 @@ impl PregenHandle {
 // Worker
 // ---------------------------------------------------------------------------
 
-fn worker(shared: Arc<Shared>) {
+fn worker(shared: &Shared) {
     loop {
         let job = {
             let mut slot = shared.job.lock().unwrap();
@@ -109,7 +119,7 @@ fn worker(shared: Arc<Shared>) {
 }
 
 fn generate(job: &Job, generation: &AtomicU64) -> Option<Board> {
-    let config = &job.config;
+    let config = job.config;
     let mut board = Board::new(config.width, config.height);
     let cancelled = || generation.load(Ordering::Relaxed) != job.generation_id;
     generate_mines(&mut board, config, job.first_click, cancelled).then_some(board)
