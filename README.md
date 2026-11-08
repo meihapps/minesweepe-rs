@@ -11,8 +11,43 @@ rust minesweeper. minesweeper in rust.
 
 ## install
 
-```
+### cargo
+
+```shell
 cargo install minesweepe-rs
+```
+
+### nix run
+
+```shell
+nix run github:meihapps/minesweepe-rs
+```
+
+### add to nix profile
+
+```shell
+nix profile install github:meihapps/minesweepe-rs
+```
+
+### flake / home manager
+
+1. add to flake inputs
+
+```nix
+inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    minesweepe-rs.url = "github:meihapps/minesweepe-rs";
+};
+```
+
+2. Add to system packages and rebuild
+
+```nix
+{config, pkgs, inputs, ... }: {
+    environment.systemPackages = [
+        inputs.minesweepe-rs.packages.${pkgs.system}.default
+    ];
+}
 ```
 
 ## controls
