@@ -44,7 +44,7 @@ inputs = {
 
 ```nix
 {config, pkgs, inputs, ... }: {
-    enviroment.systemPackages = [
+    environment.systemPackages = [
         inputs.minesweepe-rs.packages.${pkgs.system}.default
     ];
 }
